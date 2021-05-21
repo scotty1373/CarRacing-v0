@@ -35,6 +35,10 @@ class ddpg_Net:
                                              dynamic_size=True,
                                              clear_after_read=False)
 
+    def state_store_memory(self, s, a, r, s_t1, a_t1):
+        pass
+
+
     def actor_net_builder(self):
         input_ = keras.Input(shape=self.input_shape, dtype='float', name='actor_input')
         common = keras.layers.Conv2D(32, (5, 5), strides=(3, 3),
@@ -48,9 +52,12 @@ class ddpg_Net:
                                      activation='relu')(common)
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
-        actor_mu = keras.layers.Dense(units=self.out_shape)(common)
+        actor_angle = keras.layers.Dense(units=self.out_shape, activation='tanh')(common)
 
-        model = keras.Model(inputs=input_, outputs=actor_mu, name='actor')
+        actor_accela = keras.layers.Dense(units=self.out_shape, activation='tanh')(common)
+
+
+        model = keras.Model(inputs=input_, outputs=[actor_angle, actor_accela], name='actor')
         return model
 
     def critic_net_build(self):
@@ -77,20 +84,37 @@ class ddpg_Net:
         model = keras.Model(inputs=[input_state, input_action], outputs=critic_output, name='critic')
         return model
 
+    def action_choose(self, s):
+        pass
+
+
     def weight_update(self):
         self.actor_target_model.set_weights(self.actor_model.get_weights())
         self.critic_target_model.set_weights(self.critic_model.get_weights())
 
-    def critic_loss(self, s, r, s_t1, a, a_t1):
+    def critic_loss(self, s, r, s_t1, a):
         # critic model q real
-        q_real = self.critic_model(s, a)
+        q_real = self.critic_model([s, a])
         # target critic model q estimate
-        q_estimate = self.critic_target_model(s_t1, a_t1)
+        a_t1 = self.actor_target_model(s_t1)                # actor denormalization waiting!!!
+        q_estimate = self.critic_target_model([s_t1, a_t1])
         # TD-target
         q_target = r + q_estimate * self.gamma
         return q_target, q_real
 
-    def learn(self, s, ):
+    def train_loop(self, s, r, s_t1, a):
+        # parameters initiation
+        optimizer_actor = keras.optimizers.Adam(-self.learning_rate_a)
+        optimizer_critic = keras.optimizers.Adam(self.learning_rate_c)
+
+        with tf.GradientTape(persistent=True) as tape:
+            q_target, q_real = self.critic_loss(s, r, s_t1, a)
+            loss_policy = q_real
+            loss_value = keras.losses.mean_squared_error(q_target, q_real)
+
+        optimizer_actor.minimize(loss_policy, var_list=self.actor_model.trainable_weights, tape=tape)
+        optimizer_critic.minimize(loss_value, var_list=self.critic_model.trainable_weights, tape=tape)
+
 
 
 if __name__ == '__main__':
