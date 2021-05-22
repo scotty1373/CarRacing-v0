@@ -23,7 +23,9 @@ class ddpg_Net:
         self.actor_model = self.actor_net_builder()
         self.critic_model = self.critic_net_build()
         self.actor_target_model = self.actor_net_builder()
+        self.actor_target_model.trainable = False
         self.critic_target_model = self.critic_net_build()
+        self.critic_target_model.trainable = False
 
         self.actor_history = tf.TensorArray(dtype=tf.float32, size=0,
                                             dynamic_size=True,
@@ -37,7 +39,6 @@ class ddpg_Net:
 
     def state_store_memory(self, s, a, r, s_t1, a_t1):
         pass
-
 
     def actor_net_builder(self):
         input_ = keras.Input(shape=self.input_shape, dtype='float', name='actor_input')
@@ -55,7 +56,6 @@ class ddpg_Net:
         actor_angle = keras.layers.Dense(units=self.out_shape, activation='tanh')(common)
 
         actor_accela = keras.layers.Dense(units=self.out_shape, activation='tanh')(common)
-
 
         model = keras.Model(inputs=input_, outputs=[actor_angle, actor_accela], name='actor')
         return model
@@ -122,12 +122,12 @@ class ddpg_Net:
         optimizer_critic.minimize(loss_value, var_list=self.critic_model.trainable_weights, tape=tape)
 
 
-
 if __name__ == '__main__':
     shape_in = (96, 96, 3)
     init = ddpg_Net(shape_in, 1)
     init.actor_model.summary()
     init.critic_model.summary()
+    a = 1
 
 
 
