@@ -1,14 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+import random
 
 import tensorflow as tf
 import tensorflow.keras as keras
 import numpy as np
 import tensorflow_probability as tfp
 import gym
+from collections import deque
 
 LEARNING_RATE_ACTOR = 0.001
 LEARNING_RATE_CRITIC = 0.01
+MAX_MEMORY_LEN = 32000
+accele_range = 1
+angle_range = 3
 
 
 class ddpg_Net:
@@ -17,9 +22,14 @@ class ddpg_Net:
         self.out_shape = num_output
         self.learning_rate_a = LEARNING_RATE_ACTOR
         self.learning_rate_c = LEARNING_RATE_CRITIC
+        self.memory = deque(maxlen=MAX_MEMORY_LEN)
+        self.train_start = 100
+        self.batch_size = 64
         self.gamma = 0.9
         self.sigma_fixed = 2
         self.critic_input_action_shape = 1
+        self.angle_range = angle_range
+        self.accele_range = accele_range
         self.actor_model = self.actor_net_builder()
         self.critic_model = self.critic_net_build()
         self.actor_target_model = self.actor_net_builder()
@@ -37,8 +47,8 @@ class ddpg_Net:
                                              dynamic_size=True,
                                              clear_after_read=False)
 
-    def state_store_memory(self, s, a, r, s_t1, a_t1):
-        pass
+    def state_store_memory(self, s, a, r, s_t1):
+        self.memory.append((s, a, r, s_t1))
 
     def actor_net_builder(self):
         input_ = keras.Input(shape=self.input_shape, dtype='float', name='actor_input')
@@ -92,23 +102,42 @@ class ddpg_Net:
         return model
 
     def action_choose(self, s):
-        pass
+        angle_, accele_ = self.actor_model(s)
+        angle_ = tf.multiply(angle_, self.angle_range)
+        accele_ = tf.multiply(accele_, self.accele_range)
+        return angle_, accele_
 
     def weight_update(self):
         self.actor_target_model.set_weights(self.actor_model.get_weights())
         self.critic_target_model.set_weights(self.critic_model.get_weights())
 
+    '''
+    for now the critic loss return target and real q value, that's
+    because I wanna tape the gradient in one gradienttape, if the result
+    is not good enought, split the q_real in another gradientrapt to update
+    actor network!!!
+    '''
     def critic_loss(self, s, r, s_t1, a):
         # critic model q real
         q_real = self.critic_model([s, a])
         # target critic model q estimate
-        a_t1 = self.actor_target_model(s_t1)                # actor denormalization waiting!!!
+        a_t1 = self.actor_target_model(s_t1)                # actor denormalization waiting!!!, doesn't matter with the truth action
         q_estimate = self.critic_target_model([s_t1, a_t1])
         # TD-target
         q_target = r + q_estimate * self.gamma
         return q_target, q_real
 
-    def train_loop(self, s, r, s_t1, a):
+    def learn(self):
+
+
+
+
+    def (self, s, r, s_t1, a):
+        if len(self.memory) < self.train_start:
+            return
+
+        batch = random.sample(self.memory, self.batch_size)
+
         # parameters initiation
         optimizer_actor = keras.optimizers.Adam(-self.learning_rate_a)
         optimizer_critic = keras.optimizers.Adam(self.learning_rate_c)
