@@ -63,8 +63,10 @@ class ddpg_Net:
     def critic_net_build(self):
         input_state = keras.Input(shape=self.input_shape,
                                   dtype='float', name='critic_state_input')
-        input_action = keras.Input(shape=self.critic_input_action_shape,
-                                   dtype='float', name='critic_action_input')
+        input_actor_angle = keras.Input(shape=self.critic_input_action_shape,
+                                   dtype='float', name='critic_action_angle_input')
+        input_actor_accele = keras.Input(shape= self.critic_input_action_shape,
+                                         dtype='float', name='critic_action_accele_input')
         common = keras.layers.Conv2D(32, (5, 5), strides=(3, 3),
                                      activation='relu')(input_state)             # 32, 32, 32
         common = keras.layers.MaxPooling2D((2, 2))(common)                   # 32, 16, 16
@@ -77,16 +79,20 @@ class ddpg_Net:
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
 
-        actor_in = keras.layers.Dense(units=32, activation='relu')(input_action)
-        concatenated_layer = keras.layers.Concatenate(axis=-1)([common, actor_in])
+        actor_angle_in = keras.layers.Dense(units=32, activation='relu')(input_actor_angle)
+        actor_accele_in = keras.layers.Dense(units=32, activation='relu')(input_actor_accele)
+        concatenated_layer = keras.layers.Concatenate(axis=-1)([common, actor_angle_in, actor_accele_in])
 
-        critic_output = keras.layers.Dense(units=self.out_shape, activation='relu')(concatenated_layer)
-        model = keras.Model(inputs=[input_state, input_action], outputs=critic_output, name='critic')
+        critic_output = keras.layers.Dense(units=self.out_shape,
+                                           activation='relu')(concatenated_layer)
+        model = keras.Model(inputs=[input_state, input_actor_angle,
+                                    input_actor_accele],
+                            outputs=critic_output,
+                            name='critic')
         return model
 
     def action_choose(self, s):
         pass
-
 
     def weight_update(self):
         self.actor_target_model.set_weights(self.actor_model.get_weights())
@@ -119,7 +125,7 @@ class ddpg_Net:
 
 if __name__ == '__main__':
     shape_in = (96, 96, 3)
-     = ddpg_Net(shape_in, 1)
+    init = ddpg_Net(shape_in, 1)
     init.actor_model.summary()
     init.critic_model.summary()
 
