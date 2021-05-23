@@ -4,16 +4,27 @@ import random
 
 import tensorflow as tf
 import tensorflow.keras as keras
-import numpy as np
 import tensorflow_probability as tfp
-import gym
 from collections import deque
+import numpy as np
+import platform
+import gym
+import time
+import os
 
 LEARNING_RATE_ACTOR = 0.001
 LEARNING_RATE_CRITIC = 0.01
 MAX_MEMORY_LEN = 32000
 MAX_STEP_EPISODE = 480
 TRAINABLE = True
+DECAY = 0.99
+
+
+if platform.system() == 'windows':
+    temp = os.getcwd()
+    CURRENT_PATH = temp.replace('\\', '/')
+else:
+    CURRENT_PATH = os.getcwd()
 
 
 class ddpg_Net:
@@ -23,7 +34,7 @@ class ddpg_Net:
         self.learning_rate_a = LEARNING_RATE_ACTOR
         self.learning_rate_c = LEARNING_RATE_CRITIC
         self.memory = deque(maxlen=MAX_MEMORY_LEN)
-        self.train_start = 100
+        self.train_start = 500
         self.batch_size = 64
         self.gamma = 0.9
         self.sigma_fixed = 2
@@ -58,12 +69,9 @@ class ddpg_Net:
         common = keras.layers.Conv2D(32, (5, 5), strides=(3, 3),
                                      activation='relu')(input_)  # 32, 32, 32
         common = keras.layers.MaxPooling2D((2, 2))(common)  # 32, 16, 16
-        common = keras.layers.Conv2D(64, (3, 3), padding='SAME',
-                                     strides=(3, 3),
-                                     activation='relu')(common)  # 64, 4, 4
         common = keras.layers.Conv2D(128, (3, 3),
-                                     strides=(1, 1),
-                                     activation='relu')(common)
+                                     strides=(3, 3),
+                                     activation='relu')(common)     # 128, 5, 5
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
         actor_angle = keras.layers.Dense(units=self.out_shape, activation='tanh')(common)
@@ -83,11 +91,8 @@ class ddpg_Net:
         common = keras.layers.Conv2D(32, (5, 5), strides=(3, 3),
                                      activation='relu')(input_state)  # 32, 32, 32
         common = keras.layers.MaxPooling2D((2, 2))(common)  # 32, 16, 16
-        common = keras.layers.Conv2D(64, (3, 3), padding='SAME',
-                                     strides=(3, 3),
-                                     activation='relu')(common)  # 64, 4, 4
         common = keras.layers.Conv2D(128, (3, 3),
-                                     strides=(1, 1),
+                                     strides=(3, 3),
                                      activation='relu')(common)
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
@@ -112,8 +117,13 @@ class ddpg_Net:
 
     # Exponential Moving Average update weight
     def weight_update(self):
-        self.actor_target_model.set_weights(self.actor_model.get_weights())
-        self.critic_target_model.set_weights(self.critic_model.get_weights())
+        # self.actor_target_model.set_weights(self.actor_model.get_weights())
+        # self.critic_target_model.set_weights(self.critic_model.get_weights())
+        for i, j in zip(self.critic_model.trainable_weights, self.critic_target_model.trainable_weights):
+            j.assign(j * DECAY + i * (1 - DECAY))
+        for i, j in zip(self.actor_model.trainable_weights, self.actor_target_model.trainable_weights):
+            j.assign(j * DECAY + i * (1 - DECAY))
+
 
     '''
     for now the critic loss return target and real q value, that's
@@ -176,7 +186,7 @@ if __name__ == '__main__':
 
     action_shape = env.action_space.shape
     state_shape = env.observation_space.shape
-    action_range = env.action_space.high  # [1., 1., 1.]  ~  [-1.,  0.,  0.]
+    action_range = env.action_space.high            # [1., 1., 1.]  ~  [-1.,  0.,  0.]
 
     agent = ddpg_Net(state_shape, np.ndim(action_shape), action_range[1], action_range[0])
     agent.actor_model.summary()
@@ -187,7 +197,8 @@ if __name__ == '__main__':
     while True:
         obs = env.reset()
         obs = obs.reshape(-1, 96, 96, 3)
-        ep_history = []
+        temp = []
+        ep_history = np.array(temp)
         count = 0
         for index in range(MAX_STEP_EPISODE):
             env.render()
@@ -195,16 +206,19 @@ if __name__ == '__main__':
             ang = np.clip(np.random.normal(loc=ang, scale=agent.sigma_fixed),
                           -action_range[0], action_range[0])
             acc = np.clip(np.random.normal(loc=acc, scale=agent.sigma_fixed),
-                          -action_range[1], action_range[1])
-            if acc >= 0:
-                action = np.array((ang, acc, 0), dtype='float')
-                obs_t1, reward, done, _ = env.step(action)
-            else:
-                action = np.array((ang, 0, -acc), dtype='float')
-                obs_t1, reward, done, _ = env.step(action)
+                          0, action_range[1])
+
+            action = np.array((ang, acc, 0), dtype='float')
+            obs_t1, reward, done, _ = env.step(action)
+            # if acc >= 0:
+            #     action = np.array((ang, acc, 0), dtype='float')
+            #     obs_t1, reward, done, _ = env.step(action)
+            # else:
+            #     action = np.array((ang, 0, -acc), dtype='float')
+            #     obs_t1, reward, done, _ = env.step(action)
 
             obs_t1 = obs_t1.reshape(-1, 96, 96, 3)
-
+            ep_history = np.append(ep_history, reward)
             agent.state_store_memory(obs, [ang, acc], reward, obs_t1)
 
             if done is True:
@@ -221,6 +235,13 @@ if __name__ == '__main__':
             print(f'timestep: {timestep},'
                   f'epoch: {count}, reward: {reward}, angle: {ang},'
                   f'acc: {acc}, reward_mean: {np.array(ep_history).mean()}')
-            count += 1
+
             timestep += 1
             obs = obs_t1
+
+        agent.weight_update()
+        if count % 3 == 0:
+            timestamp = time.time()
+            agent.actor_model.save(f'action_model{timestamp}.h5')
+            agent.critic_model.save(f'critic_model{timestamp}.h5')
+        count += 1
