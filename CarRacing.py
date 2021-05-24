@@ -67,9 +67,12 @@ class ddpg_Net:
         common = keras.layers.Conv2D(32, (5, 5), strides=(3, 3),
                                      activation='relu')(input_)  # 32, 32, 32
         common = keras.layers.MaxPooling2D((2, 2))(common)  # 32, 16, 16
-        common = keras.layers.Conv2D(128, (3, 3),
+        common = keras.layers.Conv2D(64, (3, 3),
                                      strides=(3, 3),
                                      activation='relu')(common)     # 128, 5, 5
+        common = keras.layers.Conv2D(128, (3, 3),
+                                     strides=(1, 1),
+                                     activation='relu')(common)
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
         actor_angle = keras.layers.Dense(units=self.out_shape, activation='tanh')(common)
@@ -89,8 +92,11 @@ class ddpg_Net:
         common = keras.layers.Conv2D(32, (5, 5), strides=(3, 3),
                                      activation='relu')(input_state)  # 32, 32, 32
         common = keras.layers.MaxPooling2D((2, 2))(common)  # 32, 16, 16
+        common = keras.layers.Conv2D(64, (3, 3),
+                                     strides=(3,3),
+                                     activation='relu')(common)
         common = keras.layers.Conv2D(128, (3, 3),
-                                     strides=(3, 3),
+                                     strides=(1, 1),
                                      activation='relu')(common)
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
@@ -99,7 +105,7 @@ class ddpg_Net:
         actor_accele_in = keras.layers.Dense(units=32, activation='relu')(input_actor_accele)
         concatenated_layer = keras.layers.Concatenate(axis=-1)([common, actor_angle_in, actor_accele_in])
 
-        critic_output = keras.layers.Dense(units=self.out_shape, activation='sigmoid')(concatenated_layer)
+        critic_output = keras.layers.Dense(units=self.out_shape, activation='softplus')(concatenated_layer)
         model = keras.Model(inputs=[input_state, input_actor_angle,
                                     input_actor_accele],
                             outputs=critic_output,
@@ -202,9 +208,14 @@ if __name__ == '__main__':
 
     count = 0
     while True:
-        obs = env.reset()
+        _ = env.reset()
+        for discard_index in range(50):
+            action = np.array((0, 0.1, 0), dtype='float')
+            obs, _, _, _ = env.step(action)
+
         obs = agent.image_process(obs)[:84, :]
         obs = np.stack((obs, obs, obs, obs), axis=2).reshape(1, obs.shape[0], obs.shape[1], -1)
+        outrange_count = 0
         temp = []
         ep_history = np.array(temp)
 
@@ -232,13 +243,12 @@ if __name__ == '__main__':
             # else:
             #     action = np.array((ang, 0, -acc), dtype='float')
             #     obs_t1, reward, done, _ = env.step(action)
-            if reward_recalculate_index.mean() < 0.40:
-                reward = reward + 1
+            if reward_recalculate_index.mean() < 0.4:
+                reward += 1
+                outrange_count = 0
             else:
                 reward -= 3
-
-            ep_history = np.append(ep_history, reward)
-            agent.state_store_memory(obs, [ang, acc], reward, obs_t1)
+                outrange_count += 1
 
             if done is True:
                 print(f'terminated by environment, timestep: {timestep},'
@@ -246,10 +256,16 @@ if __name__ == '__main__':
                       f'acc: {acc}, reward_mean: {np.array(ep_history).sum()}')
                 break
 
+            if outrange_count == 10:
+                print('out of range')
+                reward = -30
+                break
+
+            ep_history = np.append(ep_history, reward)
+            agent.state_store_memory(obs, [ang, acc], reward, obs_t1)
+
             if test_train_flag is True:
                 agent.train_replay()
-            else:
-                pass
 
             print(f'timestep: {timestep},'
                   f'epoch: {count}, reward: {reward}, angle: {ang},'
