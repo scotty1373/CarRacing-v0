@@ -7,6 +7,7 @@ import tensorflow.keras as keras
 # import tensorflow_probability as tfp
 from collections import deque
 from skimage.color import rgb2gray
+import pandas as pd
 import numpy as np
 import platform
 import gym
@@ -39,9 +40,9 @@ class ddpg_Net:
         self.learning_rate_c = LEARNING_RATE_CRITIC
         self.memory = deque(maxlen=MAX_MEMORY_LEN)
         self.train_start = 200
-        self.batch_size = 64
+        self.batch_size = 32
         self.gamma = 0.9
-        self.sigma_fixed = 2
+        self.sigma_fixed = 0.8
         self.critic_input_action_shape = 1
         self.angle_range = angle_range
         self.accele_range = accele_range
@@ -176,14 +177,16 @@ class ddpg_Net:
         with tf.GradientTape(persistent=True) as tape:
             q_target, q_real_exp = self.critic_loss(s_, r_, s_t1_, a_)
             a = self.actor_model(s_)
-            a = tf.convert_to_tensor(a, dtype='float')
-            q = self.critic_model([s_, a[0, :, :], a[1, :, :]])
+            a_type_change = np.array(a, dtype='float')
+            q = self.critic_model([s_, a_type_change[0, :, :], a_type_change[1, :, :]])
             # q_target = tf.reduce_mean(q_target)
             # q_real = tf.reduce_mean(q_real)
             loss_value = keras.losses.mean_squared_error(q_target, q_real_exp)
+        grad_critic_loss = tape.gradient(loss_value, agent.critic_model.trainable_weights)
+        grad_q = tape.gradient(q, agent.actor_model.trainable_weights)
 
-        optimizer_actor.minimize(q, var_list=self.actor_model.trainable_weights, tape=tape)
-        optimizer_critic.minimize(loss_value, var_list=self.critic_model.trainable_weights, tape=tape)
+        optimizer_actor.apply_gradients(zip(grad_q, agent.actor_model.trainable_weights))
+        optimizer_critic.apply_gradients(zip(grad_critic_loss, agent.critic_model.trainable_weights))
         del tape
 
 
@@ -200,7 +203,7 @@ if __name__ == '__main__':
     state_shape[2] = 1
     action_range = env.action_space.high            # [1., 1., 1.]  ~  [-1.,  0.,  0.]
 
-    agent = ddpg_Net((84, 96, 4), np.ndim(action_shape), action_range[1], action_range[0])
+    agent = ddpg_Net((84, 96, 1), np.ndim(action_shape), action_range[1], action_range[0])
     agent.actor_model.summary()
     agent.critic_model.summary()
     epochs = 200
@@ -213,8 +216,8 @@ if __name__ == '__main__':
             action = np.array((0, 0.1, 0), dtype='float')
             obs, _, _, _ = env.step(action)
 
-        obs = agent.image_process(obs)[:84, :]
-        obs = np.stack((obs, obs, obs, obs), axis=2).reshape(1, obs.shape[0], obs.shape[1], -1)
+        obs = agent.image_process(obs)[:84, :].reshape(1, 84, 96, 1)
+        # obs = np.stack((obs, obs, obs, obs), axis=2).reshape(1, obs.shape[0], obs.shape[1], -1)
         outrange_count = 0
         temp = []
         ep_history = np.array(temp)
@@ -227,24 +230,27 @@ if __name__ == '__main__':
             acc = np.clip(np.random.normal(loc=acc, scale=agent.sigma_fixed),
                           0, action_range[1])
 
-            action = np.array((ang, acc, 0.03), dtype='float')
+            action = np.array((ang, acc, 0.1), dtype='float')
             obs_t1, reward, done, _ = env.step(action)
 
             obs_t1 = agent.image_process(obs_t1)[:84, :]
             reward_recalculate_index = obs_t1[66:71, 45:50]
             obs_t1 = obs_t1.reshape(1, obs_t1.shape[0], obs_t1.shape[1], -1)
-            obs_t1 = np.append(obs[:, :, :, 1:], obs_t1, axis=3)
+            # obs_t1 = np.append(obs[:, :, :, 1:], obs_t1, axis=3)
 
-            cv = agent.critic_model([obs_t1, ang, acc])
-            cv_target = agent.critic_target_model([obs_t1, ang, acc])
+            c_v = agent.critic_model([obs_t1, ang, acc])
+            c_v_target = agent.critic_target_model([obs_t1, ang, acc])
             # if acc >= 0:
             #     action = np.array((ang, acc, 0), dtype='float')
             #     obs_t1, reward, done, _ = env.step(action)
             # else:
             #     action = np.array((ang, 0, -acc), dtype='float')
             #     obs_t1, reward, done, _ = env.step(action)
-            if reward_recalculate_index.mean() < 0.4:
-                reward += 1
+            if ang == 1 or ang == -1:
+                reward += -1
+                outrange_count += 1
+            elif reward_recalculate_index.mean() < 0.4:
+                reward += 3
                 outrange_count = 0
             else:
                 reward -= 3
@@ -258,7 +264,7 @@ if __name__ == '__main__':
 
             if outrange_count == 10:
                 print('out of range')
-                reward = -30
+                reward = -100
                 break
 
             ep_history = np.append(ep_history, reward)
@@ -270,13 +276,13 @@ if __name__ == '__main__':
             print(f'timestep: {timestep},'
                   f'epoch: {count}, reward: {reward}, angle: {ang},'
                   f'acc: {acc}, reward_mean: {np.array(ep_history).sum()} '
-                  f'c_r: {cv}, c_t: {cv_target}')
+                  f'c_r: {c_v}, c_t: {c_v_target}')
 
             timestep += 1
             obs = obs_t1
 
-        agent.weight_hard_update()
         if count % 10 == 0:
+            agent.weight_hard_update()
             timestamp = time.time()
             agent.actor_model.save(CURRENT_PATH + '/' + f'action_model{timestamp}.h5')
             agent.critic_model.save(CURRENT_PATH + '/' + f'critic_model{timestamp}.h5')
