@@ -4,8 +4,9 @@ import random
 
 import tensorflow as tf
 import tensorflow.keras as keras
-import tensorflow_probability as tfp
+# import tensorflow_probability as tfp
 from collections import deque
+from skimage.color import rgb2gray
 import numpy as np
 import platform
 import gym
@@ -25,6 +26,9 @@ if platform.system() == 'windows':
     CURRENT_PATH = temp.replace('\\', '/')
 else:
     CURRENT_PATH = os.getcwd()
+CURRENT_PATH = os.path.join(CURRENT_PATH, 'save_Model')
+if not os.path.exists(CURRENT_PATH):
+    os.makedirs(CURRENT_PATH)
 
 
 class ddpg_Net:
@@ -34,7 +38,7 @@ class ddpg_Net:
         self.learning_rate_a = LEARNING_RATE_ACTOR
         self.learning_rate_c = LEARNING_RATE_CRITIC
         self.memory = deque(maxlen=MAX_MEMORY_LEN)
-        self.train_start = 500
+        self.train_start = 200
         self.batch_size = 64
         self.gamma = 0.9
         self.sigma_fixed = 2
@@ -50,16 +54,10 @@ class ddpg_Net:
         # self.actor_target_model.trainable = False
         # self.critic_target_model.trainable = False
 
-        self.actor_history = tf.TensorArray(dtype=tf.float32, size=0,
-                                            dynamic_size=True,
-                                            clear_after_read=False)
-        self.critic_history = tf.TensorArray(dtype=tf.float32, size=0,
-                                             dynamic_size=True,
-                                             clear_after_read=False)
-        self.reward_history = tf.TensorArray(dtype=tf.float32, size=0,
-                                             dynamic_size=True,
-                                             clear_after_read=False)
-        self.weight_update()
+        self.actor_history = []
+        self.critic_history = []
+        self.reward_history = []
+        self.weight_hard_update()
 
     def state_store_memory(self, s, a, r, s_t1):
         self.memory.append((s, a, r, s_t1))
@@ -76,7 +74,7 @@ class ddpg_Net:
         common = keras.layers.Dense(units=128, activation='relu')(common)
         actor_angle = keras.layers.Dense(units=self.out_shape, activation='tanh')(common)
 
-        actor_accela = keras.layers.Dense(units=self.out_shape, activation='tanh')(common)
+        actor_accela = keras.layers.Dense(units=self.out_shape, activation='sigmoid')(common)
 
         model = keras.Model(inputs=input_, outputs=[actor_angle, actor_accela], name='actor')
         return model
@@ -101,28 +99,35 @@ class ddpg_Net:
         actor_accele_in = keras.layers.Dense(units=32, activation='relu')(input_actor_accele)
         concatenated_layer = keras.layers.Concatenate(axis=-1)([common, actor_angle_in, actor_accele_in])
 
-        critic_output = keras.layers.Dense(units=self.out_shape,
-                                           activation='relu')(concatenated_layer)
+        critic_output = keras.layers.Dense(units=self.out_shape, activation='sigmoid')(concatenated_layer)
         model = keras.Model(inputs=[input_state, input_actor_angle,
                                     input_actor_accele],
                             outputs=critic_output,
                             name='critic')
         return model
 
+    def image_process(self, obs):
+        obs = rgb2gray(obs)
+        return obs
+
     def action_choose(self, s):
         angle_, accele_ = self.actor_model(s)
-        angle_ = tf.multiply(angle_, self.angle_range)
-        accele_ = tf.multiply(accele_, self.accele_range)
+        # angle_ = tf.multiply(angle_, self.angle_range)
+        # accele_ = tf.multiply(accele_, self.accele_range)
         return angle_, accele_
 
     # Exponential Moving Average update weight
-    def weight_update(self):
+    def weight_soft_update(self):
         # self.actor_target_model.set_weights(self.actor_model.get_weights())
         # self.critic_target_model.set_weights(self.critic_model.get_weights())
         for i, j in zip(self.critic_model.trainable_weights, self.critic_target_model.trainable_weights):
             j.assign(j * DECAY + i * (1 - DECAY))
         for i, j in zip(self.actor_model.trainable_weights, self.actor_target_model.trainable_weights):
             j.assign(j * DECAY + i * (1 - DECAY))
+
+    def weight_hard_update(self):
+        self.actor_target_model.set_weights(self.actor_model.get_weights())
+        self.critic_target_model.set_weights(self.critic_model.get_weights())
 
 
     '''
@@ -150,14 +155,14 @@ class ddpg_Net:
 
         batch_data = random.sample(self.memory, self.batch_size)
         s_, a_, r_, s_t1_ = zip(*batch_data)
-        s_ = tf.convert_to_tensor(s_, dtype='float')
-        s_ = tf.squeeze(s_)
-        a_ = tf.convert_to_tensor(a_, dtype='float')
-        a_ = tf.squeeze(a_)
-        r_ = tf.convert_to_tensor(r_, dtype='float')
-        r_ = tf.reshape(tf.squeeze(r_), [self.batch_size, -1])
-        s_t1_ = tf.convert_to_tensor(s_t1_, dtype='float')
-        s_t1_ = tf.squeeze(s_t1_)
+        s_ = np.array(s_, dtype='float').squeeze()
+
+        a_ = np.array(a_, dtype='float').squeeze()
+
+        r_ = np.array(r_, dtype='float').reshape(self.batch_size, -1)
+
+        s_t1_ = np.array(s_t1_, dtype='float').squeeze()
+
         # parameters initiation
         optimizer_actor = keras.optimizers.Adam(-self.learning_rate_a)
         optimizer_critic = keras.optimizers.Adam(self.learning_rate_c)
@@ -185,21 +190,24 @@ if __name__ == '__main__':
     test_train_flag = TRAINABLE
 
     action_shape = env.action_space.shape
-    state_shape = env.observation_space.shape
+    state_shape = np.array(env.observation_space.shape)
+    state_shape[2] = 1
     action_range = env.action_space.high            # [1., 1., 1.]  ~  [-1.,  0.,  0.]
 
-    agent = ddpg_Net(state_shape, np.ndim(action_shape), action_range[1], action_range[0])
+    agent = ddpg_Net((84, 96, 4), np.ndim(action_shape), action_range[1], action_range[0])
     agent.actor_model.summary()
     agent.critic_model.summary()
     epochs = 200
     timestep = 0
 
+    count = 0
     while True:
         obs = env.reset()
-        obs = obs.reshape(-1, 96, 96, 3)
+        obs = agent.image_process(obs)[:84, :]
+        obs = np.stack((obs, obs, obs, obs), axis=2).reshape(1, obs.shape[0], obs.shape[1], -1)
         temp = []
         ep_history = np.array(temp)
-        count = 0
+
         for index in range(MAX_STEP_EPISODE):
             env.render()
             ang, acc = agent.action_choose(obs)
@@ -208,23 +216,34 @@ if __name__ == '__main__':
             acc = np.clip(np.random.normal(loc=acc, scale=agent.sigma_fixed),
                           0, action_range[1])
 
-            action = np.array((ang, acc, 0), dtype='float')
+            action = np.array((ang, acc, 0.03), dtype='float')
             obs_t1, reward, done, _ = env.step(action)
+
+            obs_t1 = agent.image_process(obs_t1)[:84, :]
+            reward_recalculate_index = obs_t1[66:71, 45:50]
+            obs_t1 = obs_t1.reshape(1, obs_t1.shape[0], obs_t1.shape[1], -1)
+            obs_t1 = np.append(obs[:, :, :, 1:], obs_t1, axis=3)
+
+            cv = agent.critic_model([obs_t1, ang, acc])
+            cv_target = agent.critic_target_model([obs_t1, ang, acc])
             # if acc >= 0:
             #     action = np.array((ang, acc, 0), dtype='float')
             #     obs_t1, reward, done, _ = env.step(action)
             # else:
             #     action = np.array((ang, 0, -acc), dtype='float')
             #     obs_t1, reward, done, _ = env.step(action)
+            if reward_recalculate_index.mean() < 0.40:
+                reward = reward + 1
+            else:
+                reward -= 3
 
-            obs_t1 = obs_t1.reshape(-1, 96, 96, 3)
             ep_history = np.append(ep_history, reward)
             agent.state_store_memory(obs, [ang, acc], reward, obs_t1)
 
             if done is True:
                 print(f'terminated by environment, timestep: {timestep},'
                       f'epoch: {count}, reward: {reward}, angle: {ang},'
-                      f'acc: {acc}, reward_mean: {np.array(ep_history).mean()}')
+                      f'acc: {acc}, reward_mean: {np.array(ep_history).sum()}')
                 break
 
             if test_train_flag is True:
@@ -234,14 +253,15 @@ if __name__ == '__main__':
 
             print(f'timestep: {timestep},'
                   f'epoch: {count}, reward: {reward}, angle: {ang},'
-                  f'acc: {acc}, reward_mean: {np.array(ep_history).mean()}')
+                  f'acc: {acc}, reward_mean: {np.array(ep_history).sum()} '
+                  f'c_r: {cv}, c_t: {cv_target}')
 
             timestep += 1
             obs = obs_t1
 
-        agent.weight_update()
-        if count % 3 == 0:
+        agent.weight_hard_update()
+        if count % 10 == 0:
             timestamp = time.time()
-            agent.actor_model.save(f'action_model{timestamp}.h5')
-            agent.critic_model.save(f'critic_model{timestamp}.h5')
+            agent.actor_model.save(CURRENT_PATH + '/' + f'action_model{timestamp}.h5')
+            agent.critic_model.save(CURRENT_PATH + '/' + f'critic_model{timestamp}.h5')
         count += 1
