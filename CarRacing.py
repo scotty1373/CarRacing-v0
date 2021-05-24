@@ -146,15 +146,15 @@ class ddpg_Net:
 
     def critic_loss(self, s, r, s_t1, a):
         # critic model q real
-
-        q_real_exp = self.critic_model([s, a[:, 0], a[:, 1]])
+        q_real = self.critic_model([s, a[:, 0, :], a[:, 1, :]])
         # target critic model q estimate
-        a_t1 = self.actor_target_model(s_t1)  # actor denormalization waiting!!!, doesn't matter with the truth action
-        a_t1 = tf.convert_to_tensor(a_t1, dtype='float')
-        q_estimate = self.critic_target_model([s_t1, a_t1[0, :, :], a_t1[1, :, :]])
+        a_t1 = self.actor_target_model(s_t1)    # actor denormalization waiting!!!, doesn't matter with the truth action
+        a_t1_ang, a_t1_acc = tf.split(a_t1, 2, axis=0)
+        q_estimate = self.critic_target_model([s_t1, tf.squeeze(a_t1_ang, axis=0),
+                                               tf.squeeze(a_t1_acc, axis=0)])
         # TD-target
         q_target = r + q_estimate * self.gamma
-        return q_target, q_real_exp
+        return q_target, q_real
 
     def train_replay(self):
         if len(self.memory) < self.train_start:
@@ -162,32 +162,32 @@ class ddpg_Net:
 
         batch_data = random.sample(self.memory, self.batch_size)
         s_, a_, r_, s_t1_ = zip(*batch_data)
-        s_ = np.array(s_, dtype='float').squeeze()
+        s_ = np.array(s_, dtype='float').squeeze(axis=1)
 
-        a_ = np.array(a_, dtype='float').squeeze()
+        a_ = np.array(a_, dtype='float').squeeze(axis=2)   # ang = a[:, 0, :], acc = a[:, 1, :]
 
         r_ = np.array(r_, dtype='float').reshape(self.batch_size, -1)
 
-        s_t1_ = np.array(s_t1_, dtype='float').squeeze()
+        s_t1_ = np.array(s_t1_, dtype='float').squeeze(axis=1)
 
         # parameters initiation
-        optimizer_actor = keras.optimizers.Adam(-self.learning_rate_a)
+        optimizer_actor = keras.optimizers.Adam(self.learning_rate_a)
         optimizer_critic = keras.optimizers.Adam(self.learning_rate_c)
 
-        with tf.GradientTape(persistent=True) as tape:
-            q_target, q_real_exp = self.critic_loss(s_, r_, s_t1_, a_)
-            a = self.actor_model(s_)
-            a_type_change = np.array(a, dtype='float')
-            q = self.critic_model([s_, a_type_change[0, :, :], a_type_change[1, :, :]])
+        with tf.GradientTape() as tape:
+            q_target, q_real = self.critic_loss(s_, r_, s_t1_, a_)
             # q_target = tf.reduce_mean(q_target)
             # q_real = tf.reduce_mean(q_real)
-            loss_value = keras.losses.mean_squared_error(q_target, q_real_exp)
+            loss_value = keras.losses.mean_squared_error(q_real, q_target)
         grad_critic_loss = tape.gradient(loss_value, agent.critic_model.trainable_weights)
-        grad_q = tape.gradient(q, agent.actor_model.trainable_weights)
-
-        optimizer_actor.apply_gradients(zip(grad_q, agent.actor_model.trainable_weights))
         optimizer_critic.apply_gradients(zip(grad_critic_loss, agent.critic_model.trainable_weights))
-        del tape
+
+        with tf.GradientTape() as tape:
+            a = self.actor_model(s_)
+            a_ang, a_acc = tf.split(a, 2, axis=0)
+            q = -self.critic_model([s_, tf.squeeze(a_ang, axis=[0]), tf.squeeze(a_acc, axis=[0])])
+        grad_a = tape.gradient(q, agent.actor_model.trainable_weights)
+        optimizer_actor.apply_gradients(zip(grad_a, agent.actor_model.trainable_weights))
 
 
 if __name__ == '__main__':
@@ -224,10 +224,10 @@ if __name__ == '__main__':
 
         for index in range(MAX_STEP_EPISODE):
             env.render()
-            ang, acc = agent.action_choose(obs)
-            ang = np.clip(np.random.normal(loc=ang, scale=agent.sigma_fixed),
+            ang_net, acc_net = agent.action_choose(obs)
+            ang = np.clip(np.random.normal(loc=ang_net, scale=agent.sigma_fixed),
                           -action_range[0], action_range[0])
-            acc = np.clip(np.random.normal(loc=acc, scale=agent.sigma_fixed),
+            acc = np.clip(np.random.normal(loc=acc_net, scale=agent.sigma_fixed),
                           0, action_range[1])
 
             action = np.array((ang, acc, 0.1), dtype='float')
@@ -265,10 +265,12 @@ if __name__ == '__main__':
             if outrange_count == 10:
                 print('out of range')
                 reward = -100
+                ep_history = np.append(ep_history, reward)
+                agent.state_store_memory(obs, [ang, acc], reward, obs_t1)
                 break
 
             ep_history = np.append(ep_history, reward)
-            agent.state_store_memory(obs, [ang, acc], reward, obs_t1)
+            agent.state_store_memory(obs, [ang_net, acc_net], reward, obs_t1)
 
             if test_train_flag is True:
                 agent.train_replay()
