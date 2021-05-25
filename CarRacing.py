@@ -40,8 +40,8 @@ class ddpg_Net:
         self.learning_rate_c = LEARNING_RATE_CRITIC
         self.memory = deque(maxlen=MAX_MEMORY_LEN)
         self.train_start = 200
-        self.batch_size = 32
-        self.gamma = 0.9
+        self.batch_size = 16
+        self.gamma = 0.95
         self.sigma_fixed = 0.8
         self.critic_input_action_shape = 1
         self.angle_range = angle_range
@@ -67,13 +67,10 @@ class ddpg_Net:
         input_ = keras.Input(shape=self.input_shape, dtype='float', name='actor_input')
         common = keras.layers.Conv2D(32, (5, 5), strides=(3, 3),
                                      activation='relu')(input_)  # 32, 32, 32
-        common = keras.layers.MaxPooling2D((2, 2))(common)  # 32, 16, 16
-        common = keras.layers.Conv2D(64, (3, 3),
+        common = keras.layers.Conv2D(128, (3, 3),
                                      strides=(3, 3),
                                      activation='relu')(common)     # 128, 5, 5
-        common = keras.layers.Conv2D(128, (3, 3),
-                                     strides=(1, 1),
-                                     activation='relu')(common)
+
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
         actor_angle = keras.layers.Dense(units=self.out_shape, activation='tanh')(common)
@@ -92,18 +89,16 @@ class ddpg_Net:
                                          dtype='float', name='critic_action_accele_input')
         common = keras.layers.Conv2D(32, (5, 5), strides=(3, 3),
                                      activation='relu')(input_state)  # 32, 32, 32
-        common = keras.layers.MaxPooling2D((2, 2))(common)  # 32, 16, 16
-        common = keras.layers.Conv2D(64, (3, 3),
+        common = keras.layers.Conv2D(128, (3, 3),
                                      strides=(3,3),
                                      activation='relu')(common)
-        common = keras.layers.Conv2D(128, (3, 3),
-                                     strides=(1, 1),
-                                     activation='relu')(common)
+
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
+        common = keras.layers.Dense(units=8, activation='relu')(common)
 
-        actor_angle_in = keras.layers.Dense(units=32, activation='relu')(input_actor_angle)
-        actor_accele_in = keras.layers.Dense(units=32, activation='relu')(input_actor_accele)
+        actor_angle_in = keras.layers.Dense(units=8, activation='relu')(input_actor_angle)
+        actor_accele_in = keras.layers.Dense(units=8, activation='relu')(input_actor_accele)
         concatenated_layer = keras.layers.Concatenate(axis=-1)([common, actor_angle_in, actor_accele_in])
 
         critic_output = keras.layers.Dense(units=self.out_shape, activation='softplus')(concatenated_layer)
@@ -113,9 +108,16 @@ class ddpg_Net:
                             name='critic')
         return model
 
-    def image_process(self, obs):
-        obs = rgb2gray(obs)
-        return obs
+    @staticmethod
+    def image_process(obs):
+        origin_obs = rgb2gray(obs)
+        car_shape = origin_obs[44:84, 28:68].reshape(1, 40, 40, 1)
+        state_bar = origin_obs[84:, 12:]
+        right_position = state_bar[6, 36:46]
+        left_position = state_bar[6, 26:36]
+        car_range = origin_obs[44:84, 28:68][22:27, 17:22]
+
+        return car_shape, right_position, left_position, car_range
 
     def action_choose(self, s):
         angle_, accele_ = self.actor_model(s)
@@ -203,10 +205,10 @@ if __name__ == '__main__':
     state_shape[2] = 1
     action_range = env.action_space.high            # [1., 1., 1.]  ~  [-1.,  0.,  0.]
 
-    agent = ddpg_Net((84, 96, 1), np.ndim(action_shape), action_range[1], action_range[0])
+    agent = ddpg_Net((40, 40, 1), np.ndim(action_shape), action_range[1], action_range[0])
     agent.actor_model.summary()
     agent.critic_model.summary()
-    epochs = 200
+    epochs = 400
     timestep = 0
 
     count = 0
@@ -216,7 +218,7 @@ if __name__ == '__main__':
             action = np.array((0, 0.1, 0), dtype='float')
             obs, _, _, _ = env.step(action)
 
-        obs = agent.image_process(obs)[:84, :].reshape(1, 84, 96, 1)
+        obs, _, _, _ = agent.image_process(obs)
         # obs = np.stack((obs, obs, obs, obs), axis=2).reshape(1, obs.shape[0], obs.shape[1], -1)
         outrange_count = 0
         temp = []
@@ -230,30 +232,23 @@ if __name__ == '__main__':
             acc = np.clip(np.random.normal(loc=acc_net, scale=agent.sigma_fixed),
                           0, action_range[1])
 
-            action = np.array((ang, acc, 0.1), dtype='float')
+            action = np.array((ang, acc, 0.03), dtype='float')
             obs_t1, reward, done, _ = env.step(action)
 
-            obs_t1 = agent.image_process(obs_t1)[:84, :]
-            reward_recalculate_index = obs_t1[66:71, 45:50]
-            obs_t1 = obs_t1.reshape(1, obs_t1.shape[0], obs_t1.shape[1], -1)
+            obs_t1, right, left, reward_recalculate_index = agent.image_process(obs_t1)
             # obs_t1 = np.append(obs[:, :, :, 1:], obs_t1, axis=3)
 
             c_v = agent.critic_model([obs_t1, ang, acc])
             c_v_target = agent.critic_target_model([obs_t1, ang, acc])
-            # if acc >= 0:
-            #     action = np.array((ang, acc, 0), dtype='float')
-            #     obs_t1, reward, done, _ = env.step(action)
-            # else:
-            #     action = np.array((ang, 0, -acc), dtype='float')
-            #     obs_t1, reward, done, _ = env.step(action)
-            if ang == 1 or ang == -1:
-                reward += -1
+
+            if right.mean() > 0.429 or left.mean() > 0.429:
+                reward += -5
                 outrange_count += 1
             elif reward_recalculate_index.mean() < 0.4:
-                reward += 3
+                reward += 0.7
                 outrange_count = 0
             else:
-                reward -= 3
+                reward -= 0.8
                 outrange_count += 1
 
             if done is True:
@@ -262,7 +257,7 @@ if __name__ == '__main__':
                       f'acc: {acc}, reward_mean: {np.array(ep_history).sum()}')
                 break
 
-            if outrange_count == 10:
+            if outrange_count == 20:
                 print('out of range')
                 reward = -100
                 ep_history = np.append(ep_history, reward)
@@ -270,7 +265,7 @@ if __name__ == '__main__':
                 break
 
             ep_history = np.append(ep_history, reward)
-            agent.state_store_memory(obs, [ang_net, acc_net], reward, obs_t1)
+            agent.state_store_memory(obs, [ang, acc], reward, obs_t1)
 
             if test_train_flag is True:
                 agent.train_replay()
