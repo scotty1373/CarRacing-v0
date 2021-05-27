@@ -8,6 +8,7 @@ import tensorflow.keras as keras
 # import tensorflow_probability as tfp
 from collections import deque
 from skimage.color import rgb2gray
+from ou_noise import OUNoise
 import pandas as pd
 import numpy as np
 import platform
@@ -18,10 +19,10 @@ import os
 LEARNING_RATE_ACTOR = 0.001
 LEARNING_RATE_CRITIC = 0.001
 MAX_MEMORY_LEN = 32000
-MAX_STEP_EPISODE = 480
+MAX_STEP_EPISODE = 1000
 TRAINABLE = True
 DECAY = 0.99
-channel = 1
+CHANNEL = 1
 
 
 if platform.system() == 'windows':
@@ -41,7 +42,7 @@ class ddpg_Net:
         self.learning_rate_a = LEARNING_RATE_ACTOR
         self.learning_rate_c = LEARNING_RATE_CRITIC
         self.memory = deque(maxlen=MAX_MEMORY_LEN)
-        self.channel = 1
+        self.channel =
         self.train_start = 200
         self.batch_size = 64
         self.gamma = 0.9
@@ -52,8 +53,8 @@ class ddpg_Net:
         self.actor_model = self.actor_net_builder()
         self.critic_model = self.critic_net_build()
         self.actor_target_model = self.actor_net_builder()
-
         self.critic_target_model = self.critic_net_build()
+        self.OUnoise = OUNoise(2)
 
         # self.actor_target_model.trainable = False
         # self.critic_target_model.trainable = False
@@ -81,6 +82,7 @@ class ddpg_Net:
                                      activation='relu')(common)     # 128, 4, 4
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
+        common = keras.layers.Dropout(0.138)(common)
         # right_layer = keras.layers.Dense(units=16, activation='relu')(input_right)
         # left_layer = keras.layers.Dense(units=16, activation='relu')(input_left)
         concate_layer = keras.layers.Concatenate()([common, input_right, input_left])
@@ -114,6 +116,7 @@ class ddpg_Net:
 
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
+        common = keras.layers.Dropout(0.138)(common)
         concated = keras.layers.Concatenate()([common, input_right, input_left])
         actor_angle_in = keras.layers.Dense(units=16, activation='relu')(input_actor_angle)
         actor_accele_in = keras.layers.Dense(units=16, activation='relu')(input_actor_accele)
@@ -139,8 +142,10 @@ class ddpg_Net:
 
     def action_choose(self, s, right_, left_):
         angle_, accele_ = self.actor_model([s, right_, left_])
-        angle_ = tf.multiply(angle_, self.angle_range)
-        accele_ = tf.multiply(accele_, self.accele_range)
+        # angle_ = tf.multiply(angle_, self.angle_range)
+        # accele_ = tf.multiply(accele_, self.accele_range)
+        noise = self.OUnoise.noise()
+        angle_ = tf.add(angle_, noise[0])
         return angle_, accele_
 
     # Exponential Moving Average update weight
@@ -245,30 +250,29 @@ if __name__ == '__main__':
         obs, right, left, _ = agent.image_process(obs)
         # obs = np.stack((obs, obs, obs, obs), axis=2).reshape(1, obs.shape[0], obs.shape[1], -1)
         outrange_count = 0
-        temp = []
-        ep_history = np.array(temp)
+        ep_history = np.array([])
         acc_ang_flag = 0
+        live_time = 0
 
         for index in range(MAX_STEP_EPISODE):
             env.render()
             ang_net, acc_net = agent.action_choose(obs, right, left)
-            ang = np.clip(np.random.normal(loc=ang_net, scale=agent.sigma_fixed),
-                          -action_range[0], action_range[0])
+            ang = np.array(ang_net)
             acc = np.clip(np.random.normal(loc=acc_net, scale=agent.sigma_fixed),
                           0, action_range[1])
 
             # action = np.array((ang, acc, 0.05), dtype='float')
             if acc_ang_flag == 0 and acc > 0:
                 action = np.array((0, acc, 0), dtype='float')
-                ang = np.array(0).reshape(-1, channel)
+                ang = np.array(0).reshape(-1, CHANNEL)
                 acc_ang_flag += 2
             elif acc_ang_flag == 0 and acc <= 0:
                 action = np.array((0, 0, acc), dtype='float')
-                ang = np.array(0).reshape(-1, channel)
+                ang = np.array(0).reshape(-1, CHANNEL)
                 acc_ang_flag += 2
             elif acc_ang_flag != 0:
                 action = np.array((ang, 0, 0), dtype='float')
-                acc = np.array(0).reshape(-1, channel)
+                acc = np.array(0).reshape(-1, CHANNEL)
                 acc_ang_flag -= 1
 
             obs_t1, reward, done, _ = env.step(action)
@@ -279,7 +283,7 @@ if __name__ == '__main__':
             c_v = agent.critic_model([obs_t1, right_t1, left_t1, ang, acc])
             c_v_target = agent.critic_target_model([obs_t1, right_t1, left_t1, ang, acc])
 
-            if reward_recalculate_index.mean() < 0.4:
+            if reward_recalculate_index.mean() < 0.35:
                 reward += 0.9
                 outrange_count = 0
             else:
@@ -308,12 +312,13 @@ if __name__ == '__main__':
             print(f'timestep: {timestep},'
                   f'epoch: {count}, reward: {reward}, angle: {ang},'
                   f'acc: {acc}, reward_mean: {np.array(ep_history).sum()} '
-                  f'c_r: {c_v}, c_t: {c_v_target}')
+                  f'c_r: {c_v}, c_t: {c_v_target}, line_time: {live_time}')
 
             timestep += 1
             right = right_t1
             left = left_t1
             obs = obs_t1
+            live_time += 1
 
         agent.weight_soft_update()
         if count % 10 == 0:
