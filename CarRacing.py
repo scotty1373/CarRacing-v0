@@ -44,7 +44,7 @@ class ddpg_Net:
         self.learning_rate_c = LEARNING_RATE_CRITIC
         self.memory = deque(maxlen=MAX_MEMORY_LEN)
         self.channel = CHANNEL
-        self.train_start = 200
+        self.train_start = 2000
         self.batch_size = 64
         self.gamma = 0.9
         self.sigma_fixed = 2
@@ -75,21 +75,21 @@ class ddpg_Net:
         common = keras.layers.Conv2D(32, (5, 5),
                                      strides=(1, 1),
                                      activation='relu')(input_)  # 32, 36, 36
-        # common = keras.layers.Conv2D(64, (3, 3),
-        #                              strides=(3, 3),
-        #                              activation='relu')(common)     # 64, 12, 12
+        common = keras.layers.Conv2D(64, (3, 3),
+                                     strides=(3, 3),
+                                     activation='relu')(common)     # 64, 12, 12
         common = keras.layers.Conv2D(128, (3, 3),
                                      strides=(3, 3),
                                      activation='relu')(common)     # 128, 4, 4
         common = keras.layers.Flatten()(common)
-        common = keras.layers.Dense(units=64, activation='relu')(common)
+        common = keras.layers.Dense(units=128, activation='relu')(common)
         # right_layer = keras.layers.Dense(units=16, activation='relu')(input_right)
         # left_layer = keras.layers.Dense(units=16, activation='relu')(input_left)
         concate_layer = keras.layers.Concatenate()([common, input_right, input_left])
 
         actor_angle = keras.layers.Dense(units=self.out_shape, activation='tanh')(concate_layer)
 
-        actor_accela = keras.layers.Dense(units=self.out_shape, activation='sigmoid')(concate_layer)
+        actor_accela = keras.layers.Dense(units=self.out_shape, activation='tanh')(concate_layer)
 
         model = keras.Model(inputs=[input_, input_right, input_left], outputs=[actor_angle, actor_accela], name='actor')
         return model
@@ -107,21 +107,21 @@ class ddpg_Net:
         common = keras.layers.Conv2D(32, (5, 5),
                                      strides=(1, 1),
                                      activation='relu')(input_state)  # 32, 36, 36
-        # common = keras.layers.Conv2D(64, (3, 3),
-        #                              strides=(3, 3),
-        #                              activation='relu')(common)     # 64, 12, 12
+        common = keras.layers.Conv2D(64, (3, 3),
+                                     strides=(3, 3),
+                                     activation='relu')(common)     # 64, 12, 12
         common = keras.layers.Conv2D(128, (3, 3),
                                      strides=(3, 3),
                                      activation='relu')(common)     # 128, 4, 4
 
         common = keras.layers.Flatten()(common)
-        common = keras.layers.Dense(units=64, activation='relu')(common)
+        common = keras.layers.Dense(units=128, activation='relu')(common)
         concated = keras.layers.Concatenate()([common, input_right, input_left])
         actor_angle_in = keras.layers.Dense(units=16, activation='relu')(input_actor_angle)
         actor_accele_in = keras.layers.Dense(units=16, activation='relu')(input_actor_accele)
         concatenated_layer = keras.layers.Concatenate(axis=-1)([concated, actor_angle_in, actor_accele_in])
 
-        critic_output = keras.layers.Dense(units=self.out_shape, activation='softplus')(concatenated_layer)
+        critic_output = keras.layers.Dense(units=self.out_shape, activation='tanh')(concatenated_layer)
         model = keras.Model(inputs=[input_state, input_right, input_left,
                                     input_actor_angle, input_actor_accele],
                             outputs=critic_output,
@@ -144,13 +144,11 @@ class ddpg_Net:
         # angle_ = tf.multiply(angle_, self.angle_range)
         # accele_ = tf.multiply(accele_, self.accele_range)
         noise = self.OUnoise.noise()
-        angle_ = tf.add(angle_, noise[0])
+        # angle_ = tf.add(angle_, noise[0])
         return angle_, accele_
 
     # Exponential Moving Average update weight
     def weight_soft_update(self):
-        # self.actor_target_model.set_weights(self.actor_model.get_weights())
-        # self.critic_target_model.set_weights(self.critic_model.get_weights())
         for i, j in zip(self.critic_model.trainable_weights, self.critic_target_model.trainable_weights):
             j.assign(j * DECAY + i * (1 - DECAY))
         for i, j in zip(self.actor_model.trainable_weights, self.actor_target_model.trainable_weights):
@@ -213,7 +211,7 @@ class ddpg_Net:
         with tf.GradientTape(persistent=True) as tape:
             a = self.actor_model([s_, s_r_, s_l_])
             a_ang, a_acc = tf.split(a, 2, axis=0)
-            q = self.critic_model([s_, s_r_, s_l_, tf.squeeze(a_ang, axis=[0]), tf.squeeze(a_acc, axis=[0])])
+            q = -self.critic_model([s_, s_r_, s_l_, tf.squeeze(a_ang, axis=[0]), tf.squeeze(a_acc, axis=[0])])
         grad_list = tape.gradient(q, a)
         grad_a = tape.gradient(a, agent.actor_model.trainable_weights, output_gradients=grad_list)
         optimizer_actor.apply_gradients(zip(grad_a, agent.actor_model.trainable_weights))
@@ -240,7 +238,7 @@ if __name__ == '__main__':
     timestep = 0
     count = 0
 
-    plt.ion()
+
 
     while True:
         _ = env.reset()
@@ -256,12 +254,12 @@ if __name__ == '__main__':
         live_time = 0
 
         for index in range(MAX_STEP_EPISODE):
-            plt.clf()
             env.render()
             ang_net, acc_net = agent.action_choose(obs, right, left)
-            ang = np.array(ang_net)
+            ang = np.clip(np.random.normal(loc=ang_net, scale=agent.sigma_fixed),
+                          -action_range[0], action_range[0])
             acc = np.clip(np.random.normal(loc=acc_net, scale=agent.sigma_fixed),
-                          0, action_range[1])
+                          -action_range[1], action_range[1])
 
             # action = np.array((ang, acc, 0.05), dtype='float')
             if acc_ang_flag == 0 and acc > 0:
@@ -280,14 +278,14 @@ if __name__ == '__main__':
             obs_t1, reward, done, _ = env.step(action)
 
             obs_t1, right_t1, left_t1, reward_recalculate_index = agent.image_process(obs_t1)
-            plt.imshow(obs_t1.reshape(40, 40), cmap='gray')
             # obs_t1 = np.append(obs[:, :, :, 1:], obs_t1, axis=3)
 
             c_v = agent.critic_model([obs_t1, right_t1, left_t1, ang, acc])
             c_v_target = agent.critic_target_model([obs_t1, right_t1, left_t1, ang, acc])
 
-            if right_t1.mean() > 0.50 or left_t1.mean() > 0.50:
+            if right_t1.mean() == 0.715 or left_t1.mean() == 0.715:
                 reward = -5
+                outrange_count += 1
             elif reward_recalculate_index.mean() < 0.35:
                 reward += 0.9
                 outrange_count = 0
