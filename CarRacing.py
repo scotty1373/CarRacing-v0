@@ -8,6 +8,7 @@ import tensorflow.keras as keras
 # import tensorflow_probability as tfp
 from collections import deque
 from skimage.color import rgb2gray
+import matplotlib.pyplot as plt
 from ou_noise import OUNoise
 import pandas as pd
 import numpy as np
@@ -42,7 +43,7 @@ class ddpg_Net:
         self.learning_rate_a = LEARNING_RATE_ACTOR
         self.learning_rate_c = LEARNING_RATE_CRITIC
         self.memory = deque(maxlen=MAX_MEMORY_LEN)
-        self.channel =
+        self.channel = CHANNEL
         self.train_start = 200
         self.batch_size = 64
         self.gamma = 0.9
@@ -74,15 +75,14 @@ class ddpg_Net:
         common = keras.layers.Conv2D(32, (5, 5),
                                      strides=(1, 1),
                                      activation='relu')(input_)  # 32, 36, 36
-        common = keras.layers.Conv2D(64, (3, 3),
-                                     strides=(3, 3),
-                                     activation='relu')(common)     # 64, 12, 12
+        # common = keras.layers.Conv2D(64, (3, 3),
+        #                              strides=(3, 3),
+        #                              activation='relu')(common)     # 64, 12, 12
         common = keras.layers.Conv2D(128, (3, 3),
                                      strides=(3, 3),
                                      activation='relu')(common)     # 128, 4, 4
         common = keras.layers.Flatten()(common)
-        common = keras.layers.Dense(units=128, activation='relu')(common)
-        common = keras.layers.Dropout(0.138)(common)
+        common = keras.layers.Dense(units=64, activation='relu')(common)
         # right_layer = keras.layers.Dense(units=16, activation='relu')(input_right)
         # left_layer = keras.layers.Dense(units=16, activation='relu')(input_left)
         concate_layer = keras.layers.Concatenate()([common, input_right, input_left])
@@ -107,16 +107,15 @@ class ddpg_Net:
         common = keras.layers.Conv2D(32, (5, 5),
                                      strides=(1, 1),
                                      activation='relu')(input_state)  # 32, 36, 36
-        common = keras.layers.Conv2D(64, (3, 3),
-                                     strides=(3, 3),
-                                     activation='relu')(common)     # 64, 12, 12
+        # common = keras.layers.Conv2D(64, (3, 3),
+        #                              strides=(3, 3),
+        #                              activation='relu')(common)     # 64, 12, 12
         common = keras.layers.Conv2D(128, (3, 3),
                                      strides=(3, 3),
                                      activation='relu')(common)     # 128, 4, 4
 
         common = keras.layers.Flatten()(common)
-        common = keras.layers.Dense(units=128, activation='relu')(common)
-        common = keras.layers.Dropout(0.138)(common)
+        common = keras.layers.Dense(units=64, activation='relu')(common)
         concated = keras.layers.Concatenate()([common, input_right, input_left])
         actor_angle_in = keras.layers.Dense(units=16, activation='relu')(input_actor_angle)
         actor_accele_in = keras.layers.Dense(units=16, activation='relu')(input_actor_accele)
@@ -202,8 +201,8 @@ class ddpg_Net:
 
         with tf.GradientTape() as tape:
             q_target, q_real = self.critic_loss(s_, s_r_, s_l_, r_, s_t1_, s_t1_r_, s_t1_l_, a_)
-            # q_target = tf.reduce_mean(q_target)
-            # q_real = tf.reduce_mean(q_real)
+            q_target = tf.reduce_mean(q_target)
+            q_real = tf.reduce_mean(q_real)
             # loss_value = keras.losses.mean_squared_error(q_real, q_target)
             # td-error
             loss = q_target - q_real
@@ -214,7 +213,7 @@ class ddpg_Net:
         with tf.GradientTape(persistent=True) as tape:
             a = self.actor_model([s_, s_r_, s_l_])
             a_ang, a_acc = tf.split(a, 2, axis=0)
-            q = -self.critic_model([s_, s_r_, s_l_, tf.squeeze(a_ang, axis=[0]), tf.squeeze(a_acc, axis=[0])])
+            q = self.critic_model([s_, s_r_, s_l_, tf.squeeze(a_ang, axis=[0]), tf.squeeze(a_acc, axis=[0])])
         grad_list = tape.gradient(q, a)
         grad_a = tape.gradient(a, agent.actor_model.trainable_weights, output_gradients=grad_list)
         optimizer_actor.apply_gradients(zip(grad_a, agent.actor_model.trainable_weights))
@@ -239,8 +238,10 @@ if __name__ == '__main__':
     agent.critic_model.summary()
     epochs = 400
     timestep = 0
-
     count = 0
+
+    plt.ion()
+
     while True:
         _ = env.reset()
         for discard_index in range(50):
@@ -255,6 +256,7 @@ if __name__ == '__main__':
         live_time = 0
 
         for index in range(MAX_STEP_EPISODE):
+            plt.clf()
             env.render()
             ang_net, acc_net = agent.action_choose(obs, right, left)
             ang = np.array(ang_net)
@@ -278,12 +280,15 @@ if __name__ == '__main__':
             obs_t1, reward, done, _ = env.step(action)
 
             obs_t1, right_t1, left_t1, reward_recalculate_index = agent.image_process(obs_t1)
+            plt.imshow(obs_t1.reshape(40, 40), cmap='gray')
             # obs_t1 = np.append(obs[:, :, :, 1:], obs_t1, axis=3)
 
             c_v = agent.critic_model([obs_t1, right_t1, left_t1, ang, acc])
             c_v_target = agent.critic_target_model([obs_t1, right_t1, left_t1, ang, acc])
 
-            if reward_recalculate_index.mean() < 0.35:
+            if right_t1.mean() > 0.50 or left_t1.mean() > 0.50:
+                reward = -5
+            elif reward_recalculate_index.mean() < 0.35:
                 reward += 0.9
                 outrange_count = 0
             else:
