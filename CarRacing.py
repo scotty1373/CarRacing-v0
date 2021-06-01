@@ -139,9 +139,20 @@ class ddpg_Net:
                  'track',
                  'wheelSpinVel',
                  'img']
-        for i in names:
-            exec("i=obs_.get(i)")
-        return focus, speedX, speedY, speedZ, opponent, rpm, track, wheelSpinel, img
+        focus = obs_.get(names[0])
+        speedX = obs_.get(names[1])
+        speedY = obs_.get(names[2])
+        speedZ = obs_.get(names[3])
+        opponent = obs_.get(names[4])
+        rpm = obs_.get(names[5])
+        track = obs_.get(names[6])
+        wheelSpinel = obs_.get([7])
+        img = obs_.get([8]).reshape(-1, 3)
+        img_data = np.zeros(shape=(64, 64, 3))
+        for i in range(3):
+            img_data[:, :, i] = 255 - img[:, i].reshape((64, 64))
+        img_data = rgb2gray(img_data/255).reshape(img_data.shape[0], img_data[1], 1)
+        return focus, speedX, speedY, speedZ, opponent, rpm, track, wheelSpinel, img_data
 
     def action_choose(self, s):
         angle_, accele_ = self.actor_model(s)
