@@ -131,7 +131,7 @@ class ddpg_Net:
         return car_shape, right_position, left_position, car_range
 
     @staticmethod
-    def data_pcs(self, obs_: dict):
+    def data_pcs(obs_: dict):
         names = ['focus',
                  'speedX', 'speedY', 'speedZ',
                  'opponents',
@@ -209,7 +209,7 @@ class ddpg_Net:
         focus_t1_ = np.array(focus_t1_, dtype='float').squeeze()
         track_t1_ = np.array(track_t1_, dtype='float').squeeze()
         # parameters initiation
-        optimizer_actor = keras.optimizers.Adam(self.learning_rate_a)
+        optimizer_actor = keras.optimizers.Adam(-self.learning_rate_a)
         optimizer_critic = keras.optimizers.Adam(self.learning_rate_c)
 
         with tf.GradientTape() as tape:
@@ -226,11 +226,14 @@ class ddpg_Net:
         with tf.GradientTape(persistent=True) as tape:
             a = self.actor_model(s_)
             a_ang, a_acc = tf.split(a, 2, axis=0)
-            q = -self.critic_model([s_, tf.squeeze(a_ang, axis=[0]), tf.squeeze(a_acc, axis=[0])])
-        grad_list = tape.gradient(q, a)
-        grad_a = tape.gradient(a, agent.actor_model.trainable_weights, output_gradients=grad_list)
+            q = self.critic_model([s_, tf.squeeze(a_ang, axis=[0]), tf.squeeze(a_acc, axis=[0])])
+            actor_loss = tf.reduce_mean(q)
+        # q based on a, so gradient with the weight of actor is based on the chain rule
+        grad_a = tape.gradient(a, agent.actor_model.trainable_weights)
         optimizer_actor.apply_gradients(zip(grad_a, agent.actor_model.trainable_weights))
         del tape
+        agent.weight_soft_update()    # soft update should be not too lang and not too short
+        agent.sigma_fixed *= .995     # decay normal function sigma val
 
 
 if __name__ == '__main__':
@@ -301,7 +304,6 @@ if __name__ == '__main__':
             obs = obs_t1
             live_time += 1
 
-        agent.weight_soft_update()
         if count == epochs:
             break
         elif count % 10 == 0:
@@ -311,4 +313,3 @@ if __name__ == '__main__':
         count += 1
 
     env.end()
-    print("Finish.")
