@@ -85,7 +85,7 @@ class ddpg_Net:
 
         actor_angle = keras.layers.Dense(units=self.out_shape, activation='tanh')(common)
 
-        actor_accela = keras.layers.Dense(units=self.out_shape, activation='tanh')(common)
+        actor_accela = keras.layers.Dense(units=self.out_shape, activation='sigmoid')(common)
 
         model = keras.Model(inputs=input_, outputs=[actor_angle, actor_accela], name='actor')
         return model
@@ -113,7 +113,7 @@ class ddpg_Net:
         actor_accele_in = keras.layers.Dense(units=16, activation='relu')(input_actor_accele)
         concatenated_layer = keras.layers.Concatenate(axis=-1)([common, actor_angle_in, actor_accele_in])
 
-        critic_output = keras.layers.Dense(units=self.out_shape, activation='tanh')(concatenated_layer)
+        critic_output = keras.layers.Dense(units=self.out_shape)(concatenated_layer)
         model = keras.Model(inputs=[input_state, input_actor_angle, input_actor_accele],
                             outputs=critic_output,
                             name='critic')
@@ -139,20 +139,22 @@ class ddpg_Net:
                  'track',
                  'wheelSpinVel',
                  'img']
-        focus = obs_.get(names[0])
-        speedX = obs_.get(names[1])
-        speedY = obs_.get(names[2])
-        speedZ = obs_.get(names[3])
-        opponent = obs_.get(names[4])
-        rpm = obs_.get(names[5])
-        track = obs_.get(names[6])
-        wheelSpinel = obs_.get([7])
-        img = obs_.get([8]).reshape(-1, 3)
+        # for i in range(len(names)):
+        #     exec('%s = obs_[i]' %names[i])
+        focus_ = obs_[0]
+        speedX_ = obs_[1]
+        speedY_ = obs_[2]
+        speedZ_ = obs_[3]
+        opponent_ = obs_[4]
+        rpm_ = obs_[5]
+        track_ = obs_[6]
+        wheelSpinel_ = obs_[7]
+        img = obs_[8].reshape(-1, 3)
         img_data = np.zeros(shape=(64, 64, 3))
         for i in range(3):
             img_data[:, :, i] = 255 - img[:, i].reshape((64, 64))
-        img_data = rgb2gray(img_data/255).reshape(img_data.shape[0], img_data[1], 1)
-        return focus, speedX, speedY, speedZ, opponent, rpm, track, wheelSpinel, img_data
+        img_data = rgb2gray(img_data/255).reshape(1, img_data.shape[0], img_data.shape[1], 1)
+        return focus_, speedX_, speedY_, speedZ_, opponent_, rpm_, track_, wheelSpinel_, img_data
 
     def action_choose(self, s):
         angle_, accele_ = self.actor_model(s)
@@ -197,7 +199,7 @@ class ddpg_Net:
             return
 
         batch_data = random.sample(self.memory, self.batch_size)
-        s_, focus_,  track_, a_, r_, focus_t1_, track_t1_ = zip(*batch_data)
+        s_, focus_, track_, a_, r_, s_t1_, focus_t1_, track_t1_ = zip(*batch_data)
         s_ = np.array(s_, dtype='float').squeeze(axis=1)
         focus_ = np.array(focus_, dtype='float').squeeze()
         track_ = np.array(track_, dtype='float').squeeze()
@@ -209,31 +211,28 @@ class ddpg_Net:
         focus_t1_ = np.array(focus_t1_, dtype='float').squeeze()
         track_t1_ = np.array(track_t1_, dtype='float').squeeze()
         # parameters initiation
+
         optimizer_actor = keras.optimizers.Adam(-self.learning_rate_a)
         optimizer_critic = keras.optimizers.Adam(self.learning_rate_c)
 
         with tf.GradientTape() as tape:
             q_target, q_real = self.critic_loss(s_, r_, s_t1_, a_)
-            q_target = tf.reduce_mean(q_target)
-            q_real = tf.reduce_mean(q_real)
-            # loss_value = keras.losses.mean_squared_error(q_real, q_target)
             # td-error
-            loss = q_target - q_real
-
-        grad_critic_loss = tape.gradient(q_real, agent.critic_model.trainable_weights, output_gradients=loss)
+            loss = tf.reduce_mean(tf.square(q_target - q_real))
+        grad_critic_loss = tape.gradient(loss, agent.critic_model.trainable_weights)
         optimizer_critic.apply_gradients(zip(grad_critic_loss, agent.critic_model.trainable_weights))
 
-        with tf.GradientTape(persistent=True) as tape:
+        with tf.GradientTape() as tape:
             a = self.actor_model(s_)
             a_ang, a_acc = tf.split(a, 2, axis=0)
             q = self.critic_model([s_, tf.squeeze(a_ang, axis=[0]), tf.squeeze(a_acc, axis=[0])])
             actor_loss = tf.reduce_mean(q)
         # q based on a, so gradient with the weight of actor is based on the chain rule
-        grad_a = tape.gradient(a, agent.actor_model.trainable_weights)
+        grad_a = tape.gradient(actor_loss, agent.actor_model.trainable_weights)
         optimizer_actor.apply_gradients(zip(grad_a, agent.actor_model.trainable_weights))
-        del tape
+
         agent.weight_soft_update()    # soft update should be not too lang and not too short
-        agent.sigma_fixed *= .995     # decay normal function sigma val
+        agent.sigma_fixed *= .9995     # decay normal function sigma val
 
 
 if __name__ == '__main__':
@@ -244,10 +243,9 @@ if __name__ == '__main__':
 
     action_shape = env.action_space.shape
     state_shape = np.array(env.observation_space.shape)
-    state_shape[2] = 1
     action_range = env.action_space.high            # [1., 1., 1.]  ~  [-1.,  0.,  0.]
 
-    agent = ddpg_Net((64, 64, 1), np.ndim(action_shape), action_range[1], action_range[0])
+    agent = ddpg_Net((64, 64, 1), np.ndim(action_shape), action_range[0], action_range[1])
     agent.actor_model.summary()
     agent.critic_model.summary()
     epochs = 400
@@ -255,7 +253,7 @@ if __name__ == '__main__':
     count = 0
 
     while True:
-        if np.mod(count, 3) == 0:
+        if np.mod(count, 100) == 0:
             # Sometimes you need to relaunch TORCS because of the memory leak error
             ob = env.reset(relaunch=True)
         else:
@@ -271,13 +269,10 @@ if __name__ == '__main__':
             ang = np.clip(np.random.normal(loc=ang_net, scale=agent.sigma_fixed),
                           -action_range[0], action_range[0])
             acc = np.clip(np.random.normal(loc=acc_net, scale=agent.sigma_fixed),
-                          -action_range[1], action_range[1])
+                          0, action_range[1])
 
-            action = np.array((0, acc, 0), dtype='float')
-            ang = np.array(0).reshape(-1, CHANNEL)
-
+            action = np.array((ang, acc), dtype='float')
             ob_t1, reward, done, _ = env.step(action)
-
             focus_t1, _, _, _, _, _, track_t1, _, obs_t1 = agent.data_pcs(ob_t1)
             c_v = agent.critic_model([obs_t1, ang, acc])
             c_v_target = agent.critic_target_model([obs_t1, ang, acc])
@@ -298,7 +293,8 @@ if __name__ == '__main__':
             print(f'timestep: {timestep},'
                   f'epoch: {count}, reward: {reward}, angle: {ang},'
                   f'acc: {acc}, reward_mean: {np.array(ep_history).sum()} '
-                  f'c_r: {c_v}, c_t: {c_v_target}, line_time: {live_time}')
+                  f'c_r: {c_v}, c_t: {c_v_target}, line_time: {live_time}'
+                  f'sigma: {agent.sigma_fixed}')
 
             timestep += 1
             obs = obs_t1
@@ -306,7 +302,7 @@ if __name__ == '__main__':
 
         if count == epochs:
             break
-        elif count % 10 == 0:
+        elif count % 100 == 0:
             timestamp = time.time()
             agent.actor_model.save(CURRENT_PATH + '/' + f'action_model{timestamp}.h5')
             agent.critic_model.save(CURRENT_PATH + '/' + f'critic_model{timestamp}.h5')
