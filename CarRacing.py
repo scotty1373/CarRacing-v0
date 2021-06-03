@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 import random
 
-import numpy
 import tensorflow as tf
 import tensorflow.keras as keras
 from collections import deque
@@ -13,7 +12,6 @@ from ou_noise import OUNoise
 import pandas as pd
 import numpy as np
 import platform
-import gym
 import time
 import os
 
@@ -56,7 +54,8 @@ class ddpg_Net:
         self.critic_model = self.critic_net_build()
         self.actor_target_model = self.actor_net_builder()
         self.critic_target_model = self.critic_net_build()
-        self.OUnoise = OUNoise(2)
+        self.OU_angle = OUNoise(action_dimension=1, mu=0, theta=0.6, sigma=0.3)
+        self.OU_accele = OUNoise(action_dimension=1, mu=0.3, theta=1.0, sigma=0.1)
 
         # self.actor_target_model.trainable = False
         # self.critic_target_model.trainable = False
@@ -84,9 +83,7 @@ class ddpg_Net:
         common = keras.layers.Dense(units=128, activation='relu')(common)
 
         actor_angle = keras.layers.Dense(units=self.out_shape, activation='tanh')(common)
-
         actor_accela = keras.layers.Dense(units=self.out_shape, activation='sigmoid')(common)
-
         model = keras.Model(inputs=input_, outputs=[actor_angle, actor_accela], name='actor')
         return model
 
@@ -136,7 +133,7 @@ class ddpg_Net:
                  'speedX', 'speedY', 'speedZ',
                  'opponents',
                  'rpm',
-                 'track',
+                 'trackPos',
                  'wheelSpinVel',
                  'img']
         # for i in range(len(names)):
@@ -147,14 +144,14 @@ class ddpg_Net:
         speedZ_ = obs_[3]
         opponent_ = obs_[4]
         rpm_ = obs_[5]
-        track_ = obs_[6]
+        trackPos_ = obs_[6]
         wheelSpinel_ = obs_[7]
         img = obs_[8]
         img_data = np.zeros(shape=(64, 64, 3))
         for i in range(3):
             img_data[:, :, i] = 255 - img[:, i].reshape((64, 64))
         img_data = rgb2gray(img_data/255).reshape(1, img_data.shape[0], img_data.shape[1], 1)
-        return focus_, speedX_, speedY_, speedZ_, opponent_, rpm_, track_, wheelSpinel_, img_data
+        return focus_, speedX_, speedY_, speedZ_, opponent_, rpm_, trackPos_, wheelSpinel_, img_data
 
     def action_choose(self, s):
         angle_, accele_ = self.actor_model(s)
@@ -265,36 +262,37 @@ if __name__ == '__main__':
             focus, _, _, _, _, _, track, _, obs = agent.data_pcs(ob)
             ang_net, acc_net = agent.action_choose(obs)
             if count < 3000:
-                noise = agent.OUnoise.noise()
-                ang_net = tf.add(ang_net, noise[0])
+                ang_net = tf.add(ang_net, agent.OU_angle.noise())
+                acc_net = tf.add(acc_net, agent.OU_accele.noise())
+            else:
+                pass
             # ang = np.clip(np.random.normal(loc=ang_net, scale=agent.sigma_fixed),
             #               -action_range[0], action_range[0])
-            ang = np.array(ang_net)
-            acc = np.clip(np.random.normal(loc=acc_net, scale=agent.sigma_fixed),
-                          0, action_range[1])
+            # acc = np.clip(np.random.normal(loc=acc_net, scale=agent.sigma_fixed),
+            #               -action_range[1], action_range[1])
 
-            action = np.array((ang_net, acc), dtype='float')
+            action = np.array((ang_net, acc_net), dtype='float')
             ob_t1, reward, done, _ = env.step(action)
             focus_t1, _, _, _, _, _, track_t1, _, obs_t1 = agent.data_pcs(ob_t1)
-            c_v = agent.critic_model([obs_t1, ang, acc])
-            c_v_target = agent.critic_target_model([obs_t1, ang, acc])
+            c_v = agent.critic_model([obs_t1, ang_net, acc_net])
+            c_v_target = agent.critic_target_model([obs_t1, ang_net, acc_net])
 
             if done:
-                agent.state_store_memory(obs, focus, track, [ang, acc], reward, obs_t1, focus_t1, track_t1)
+                agent.state_store_memory(obs, focus, track, [ang_net, acc_net], reward, obs_t1, focus_t1, track_t1)
                 print(f'terminated by environment, timestep: {timestep},'
-                      f'epoch: {count}, reward: {reward}, angle: {ang},'
-                      f'acc: {acc}, reward_mean: {np.array(ep_history).sum()}')
+                      f'epoch: {count}, reward: {reward}, angle: {tf.squeeze(ang_net)},'
+                      f'acc: {tf.squeeze(acc_net)}, reward_mean: {np.array(ep_history).sum()}')
                 break
 
             ep_history = np.append(ep_history, reward)
-            agent.state_store_memory(obs, focus, track, [ang, acc], reward, obs_t1, focus_t1, track_t1)
+            agent.state_store_memory(obs, focus, track, [ang_net, acc_net], reward, obs_t1, focus_t1, track_t1)
 
             if test_train_flag is True:
                 agent.train_replay()
 
             print(f'timestep: {timestep},'
-                  f'epoch: {count}, reward: {reward}, angle: {ang},'
-                  f'acc: {acc}, reward_mean: {np.array(ep_history).sum()} '
+                  f'epoch: {count}, reward: {reward}, angle: {ang_net},'
+                  f'acc: {acc_net}, reward_mean: {np.array(ep_history).sum()} '
                   f'c_r: {c_v}, c_t: {c_v_target}, line_time: {live_time}'
                   f'sigma: {agent.sigma_fixed}')
 
