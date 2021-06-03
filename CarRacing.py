@@ -135,7 +135,8 @@ class ddpg_Net:
                  'rpm',
                  'trackPos',
                  'wheelSpinVel',
-                 'img']
+                 'img',
+                 'trackPos']
         # for i in range(len(names)):
         #     exec('%s = obs_[i]' %names[i])
         focus_ = obs_[0]
@@ -147,11 +148,12 @@ class ddpg_Net:
         trackPos_ = obs_[6]
         wheelSpinel_ = obs_[7]
         img = obs_[8]
+        trackPos = obs_[9]
         img_data = np.zeros(shape=(64, 64, 3))
         for i in range(3):
             img_data[:, :, i] = 255 - img[:, i].reshape((64, 64))
         img_data = rgb2gray(img_data/255).reshape(1, img_data.shape[0], img_data.shape[1], 1)
-        return focus_, speedX_, speedY_, speedZ_, opponent_, rpm_, trackPos_, wheelSpinel_, img_data
+        return focus_, speedX_, speedY_, speedZ_, opponent_, rpm_, trackPos_, wheelSpinel_, img_data, trackPos
 
     def action_choose(self, s):
         angle_, accele_ = self.actor_model(s)
@@ -259,7 +261,7 @@ if __name__ == '__main__':
         live_time = 0
 
         for index in range(MAX_STEP_EPISODE):
-            focus, _, _, _, _, _, track, _, obs = agent.data_pcs(ob)
+            focus, _, _, _, _, _, track, _, obs, _ = agent.data_pcs(ob)
             ang_net, acc_net = agent.action_choose(obs)
             if count < 3000:
                 ang_net = tf.add(ang_net, agent.OU_angle.noise())
@@ -273,7 +275,7 @@ if __name__ == '__main__':
 
             action = np.array((ang_net, acc_net), dtype='float')
             ob_t1, reward, done, _ = env.step(action)
-            focus_t1, _, _, _, _, _, track_t1, _, obs_t1 = agent.data_pcs(ob_t1)
+            focus_t1, _, _, _, _, _, track_t1, _, obs_t1, _ = agent.data_pcs(ob_t1)
             c_v = agent.critic_model([obs_t1, ang_net, acc_net])
             c_v_target = agent.critic_target_model([obs_t1, ang_net, acc_net])
 
