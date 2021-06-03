@@ -45,10 +45,10 @@ class ddpg_Net:
         self.learning_rate_c = LEARNING_RATE_CRITIC
         self.memory = deque(maxlen=MAX_MEMORY_LEN)
         self.channel = CHANNEL
-        self.train_start = 2000
+        self.train_start = 1000
         self.batch_size = 64
         self.gamma = 0.9
-        self.sigma_fixed = 2
+        self.sigma_fixed = 3
         self.critic_input_action_shape = 1
         self.angle_range = angle_range
         self.accele_range = accele_range
@@ -149,7 +149,7 @@ class ddpg_Net:
         rpm_ = obs_[5]
         track_ = obs_[6]
         wheelSpinel_ = obs_[7]
-        img = obs_[8].reshape(-1, 3)
+        img = obs_[8]
         img_data = np.zeros(shape=(64, 64, 3))
         for i in range(3):
             img_data[:, :, i] = 255 - img[:, i].reshape((64, 64))
@@ -160,8 +160,6 @@ class ddpg_Net:
         angle_, accele_ = self.actor_model(s)
         # angle_ = tf.multiply(angle_, self.angle_range)
         # accele_ = tf.multiply(accele_, self.accele_range)
-        noise = self.OUnoise.noise()
-        # angle_ = tf.add(angle_, noise[0])
         return angle_, accele_
 
     # Exponential Moving Average update weight
@@ -266,12 +264,16 @@ if __name__ == '__main__':
         for index in range(MAX_STEP_EPISODE):
             focus, _, _, _, _, _, track, _, obs = agent.data_pcs(ob)
             ang_net, acc_net = agent.action_choose(obs)
-            ang = np.clip(np.random.normal(loc=ang_net, scale=agent.sigma_fixed),
-                          -action_range[0], action_range[0])
+            if count < 3000:
+                noise = agent.OUnoise.noise()
+                ang_net = tf.add(ang_net, noise[0])
+            # ang = np.clip(np.random.normal(loc=ang_net, scale=agent.sigma_fixed),
+            #               -action_range[0], action_range[0])
+            ang = np.array(ang_net)
             acc = np.clip(np.random.normal(loc=acc_net, scale=agent.sigma_fixed),
                           0, action_range[1])
 
-            action = np.array((ang, acc), dtype='float')
+            action = np.array((ang_net, acc), dtype='float')
             ob_t1, reward, done, _ = env.step(action)
             focus_t1, _, _, _, _, _, track_t1, _, obs_t1 = agent.data_pcs(ob_t1)
             c_v = agent.critic_model([obs_t1, ang, acc])
