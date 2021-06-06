@@ -70,12 +70,13 @@ class ddpg_Net:
 
     def actor_net_builder(self):
         input_ = keras.Input(shape=self.input_shape, dtype='float', name='actor_input')
+        
         common = keras.layers.Conv2D(8, (5, 5),
                                      strides=(1, 1),
                                      activation='relu')(input_)  # 8, 60, 60
         common = keras.layers.Conv2D(64, (3, 3),
                                      strides=(3, 3),
-                                     activation='relu')(common)     # 64, 20, 20
+                                     activation='relu')(common)  # 64, 20, 20
         common = keras.layers.Conv2D(128, (3, 3),
                                      strides=(3, 3),
                                      activation='relu')(common)     # 128, 6, 6
@@ -178,6 +179,7 @@ class ddpg_Net:
     is not good enough, split the q_real in another gradienttape to update
     actor network!!!
     '''
+
     def critic_loss(self, s, r, s_t1, a):
         # critic model q real
         q_real = self.critic_model([s, a[:, 0, :], a[:, 1, :]])
@@ -242,7 +244,7 @@ if __name__ == '__main__':
     state_shape = np.array(env.observation_space.shape)
     action_range = env.action_space.high            # [1., 1., 1.]  ~  [-1.,  0.,  0.]
 
-    agent = ddpg_Net((64, 64, 1), np.ndim(action_shape), action_range[0], action_range[1])
+    agent = ddpg_Net((64, 64, 4), np.ndim(action_shape), action_range[0], action_range[1])
     agent.actor_model.summary()
     agent.critic_model.summary()
     epochs = 400
@@ -260,8 +262,12 @@ if __name__ == '__main__':
         acc_ang_flag = 0
         live_time = 0
 
+        focus, speedX, _, _, _, _, track, _, obs, _ = agent.data_pcs(ob)
+        obs = np.stack((obs, obs, obs, obs), axis=3).reshape((1, 64, 64, -1))
+        speedX = np.array(speedX).reshape(1)
+        speedX = np.stack((speedX, speedX, speedX, speedX), axis=1)
+
         for index in range(MAX_STEP_EPISODE):
-            focus, _, _, _, _, _, track, _, obs, _ = agent.data_pcs(ob)
             ang_net, acc_net = agent.action_choose(obs)
             if count < 3000:
                 ang_net = tf.add(ang_net, agent.OU_angle.noise())
@@ -275,12 +281,15 @@ if __name__ == '__main__':
 
             action = np.array((ang_net, acc_net), dtype='float')
             ob_t1, reward, done, _ = env.step(action)
-            focus_t1, _, _, _, _, _, track_t1, _, obs_t1, _ = agent.data_pcs(ob_t1)
+            focus_t1, speedX_t1, _, _, _, _, track_t1, _, obs_t1, _ = agent.data_pcs(ob_t1)
+            obs_t1 = np.append(obs[:, :, :, 1:], obs_t1, axis=3)
+            speedX_t1 = np.append(speedX[:, 1:], speedX_t1, axis=1)
+
             c_v = agent.critic_model([obs_t1, ang_net, acc_net])
             c_v_target = agent.critic_target_model([obs_t1, ang_net, acc_net])
 
             if done:
-                agent.state_store_memory(obs, focus, track, [ang_net, acc_net], reward, obs_t1, focus_t1, track_t1)
+                agent.state_store_memory(obs, focus, speedX, [ang_net, acc_net], reward, obs_t1, focus_t1, speedX_t1)
                 print(f'terminated by environment, timestep: {timestep},'
                       f'epoch: {count}, reward: {reward}, angle: {tf.squeeze(ang_net)},'
                       f'acc: {tf.squeeze(acc_net)}, reward_mean: {np.array(ep_history).sum()}')
