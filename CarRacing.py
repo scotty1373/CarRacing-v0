@@ -70,7 +70,7 @@ class ddpg_Net:
 
     def actor_net_builder(self):
         input_ = keras.Input(shape=self.input_shape, dtype='float', name='actor_input')
-        input_v = keras.Input(shape=(1, 4), dtype='flaot', name='speed vector')
+        input_v = keras.Input(shape=(4,), dtype='float', name='speed vector')
         common = keras.layers.Conv2D(8, (5, 5),
                                      strides=(1, 1),
                                      activation='relu')(input_)  # 8, 60, 60
@@ -84,6 +84,7 @@ class ddpg_Net:
         common = keras.layers.Dense(units=128, activation='relu')(common)
         common = keras.layers.Dense(units=16, activation='relu')(common)
         input_v_proc = keras.layers.Dense(units=16, activation='relu')(input_v)
+        input_v_proc = keras.layers.Flatten()(input_v_proc)
         concatenated = keras.layers.Concatenate()([common, input_v_proc])
 
         actor_angle = keras.layers.Dense(units=self.out_shape, activation='tanh')(concatenated)
@@ -94,14 +95,14 @@ class ddpg_Net:
     def critic_net_build(self):
         input_state = keras.Input(shape=self.input_shape,
                                   dtype='float', name='critic_state_input')
-        input_v = keras.Input(shape=(1, 4), dtype='flaot', name='speed vector')
+        input_v = keras.Input(shape=(4,), dtype='float', name='speed vector')
         input_actor_angle = keras.Input(shape=self.critic_input_action_shape,
                                         dtype='float', name='critic_action_angle_input')
         input_actor_accele = keras.Input(shape=self.critic_input_action_shape,
                                          dtype='float', name='critic_action_accele_input')
         common = keras.layers.Conv2D(8, (5, 5),
                                      strides=(1, 1),
-                                     activation='relu')(input_)  # 8, 60, 60
+                                     activation='relu')(input_state)  # 8, 60, 60
         common = keras.layers.Conv2D(64, (3, 3),
                                      strides=(3, 3),
                                      activation='relu')(common)  # 64, 20, 20
@@ -113,6 +114,7 @@ class ddpg_Net:
         common = keras.layers.Dense(units=16, activation='relu')(common)
 
         input_v_proc = keras.layers.Dense(units=16, activation='relu')(input_v)
+        input_v_proc = keras.layers.Flatten()(input_v_proc)
         actor_angle_in = keras.layers.Dense(units=16, activation='relu')(input_actor_angle)
         actor_accele_in = keras.layers.Dense(units=16, activation='relu')(input_actor_accele)
 
@@ -163,8 +165,8 @@ class ddpg_Net:
         img_data = rgb2gray(img_data/255).reshape(1, img_data.shape[0], img_data.shape[1], 1)
         return focus_, speedX_, speedY_, speedZ_, opponent_, rpm_, trackPos_, wheelSpinel_, img_data, trackPos
 
-    def action_choose(self, s):
-        angle_, accele_ = self.actor_model(s)
+    def action_choose(self, input_):
+        angle_, accele_ = self.actor_model(input_)
         # angle_ = tf.multiply(angle_, self.angle_range)
         # accele_ = tf.multiply(accele_, self.accele_range)
         return angle_, accele_
@@ -191,7 +193,7 @@ class ddpg_Net:
         # critic model q real
         q_real = self.critic_model([s, speedx_, a[:, 0, :], a[:, 1, :]])
         # target critic model q estimate
-        a_t1 = self.actor_target_model(s_t1, speedx_)    # actor denormalization waiting!!!, doesn't matter with the truth action
+        a_t1 = self.actor_target_model([s_t1, speedx_])    # actor denormalization waiting!!!, doesn't matter with the truth action
         a_t1_ang, a_t1_acc = tf.split(a_t1, 2, axis=0)
         q_estimate = self.critic_target_model([s_t1, speedx_t1,
                                                tf.squeeze(a_t1_ang, axis=0),
@@ -229,7 +231,7 @@ class ddpg_Net:
         optimizer_critic.apply_gradients(zip(grad_critic_loss, agent.critic_model.trainable_weights))
 
         with tf.GradientTape() as tape:
-            a = self.actor_model(s_, speedX_)
+            a = self.actor_model([s_, speedX_])
             a_ang, a_acc = tf.split(a, 2, axis=0)
             q = self.critic_model([s_, speedX_, tf.squeeze(a_ang, axis=[0]), tf.squeeze(a_acc, axis=[0])])
             actor_loss = tf.reduce_mean(q)
@@ -275,7 +277,7 @@ if __name__ == '__main__':
         speedX = np.stack((speedX, speedX, speedX, speedX), axis=1)
 
         for index in range(MAX_STEP_EPISODE):
-            ang_net, acc_net = agent.action_choose(obs)
+            ang_net, acc_net = agent.action_choose([obs, speedX.reshape(4)])
             if count < 3000:
                 ang_net = tf.add(ang_net, agent.OU_angle.noise())
                 acc_net = tf.add(acc_net, agent.OU_accele.noise())
@@ -292,7 +294,7 @@ if __name__ == '__main__':
             obs_t1 = np.append(obs[:, :, :, 1:], obs_t1, axis=3)
             speedX_t1 = np.append(speedX[:, 1:], speedX_t1, axis=1)
 
-            c_v = agent.critic_model([obs_t1, speedX_t1, ang_net, acc_net])
+            c_v = agent.critic_model([obs_t1, speedX_t1.reshape(4), ang_net, acc_net])
             c_v_target = agent.critic_target_model([obs_t1, speedX_t1, ang_net, acc_net])
 
             if done:
@@ -316,6 +318,7 @@ if __name__ == '__main__':
 
             timestep += 1
             obs = obs_t1
+            speedX = speedX_t1
             live_time += 1
 
         if count == epochs:
