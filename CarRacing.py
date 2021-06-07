@@ -287,8 +287,10 @@ if __name__ == '__main__':
         for index in range(MAX_STEP_EPISODE):
             ang_net, acc_net = agent.action_choose([obs, speedX])
             if count < 3000:
-                ang_net = tf.add(ang_net, agent.OU_angle.noise())
-                acc_net = tf.add(acc_net, agent.OU_accele.noise())
+                ang_noise = agent.OU_angle.noise()
+                acc_noise = agent.OU_accele.noise()
+                ang_net = tf.add(ang_net, ang_noise)
+                acc_net = tf.add(acc_net, acc_noise)
             else:
                 pass
             # ang = np.clip(np.random.normal(loc=ang_net, scale=agent.sigma_fixed),
@@ -320,8 +322,8 @@ if __name__ == '__main__':
                 agent.train_replay()
 
             print(f'timestep: {timestep},'
-                  f'epoch: {count}, reward: {reward}, angle: {ang_net},'
-                  f'acc: {acc_net}, reward_mean: {np.array(ep_history).sum()} '
+                  f'epoch: {count}, reward: {reward}, ang: {ang_net}, ang_noise: {ang_noise}'
+                  f'acc: {acc_net}, acc_noise: {acc_noise}, reward_mean: {np.array(ep_history).sum()} '
                   f'c_r: {c_v}, c_t: {c_v_target}, line_time: {live_time} '
                   f'sigma: {agent.sigma_fixed}')
 
