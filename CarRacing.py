@@ -43,7 +43,7 @@ class ddpg_Net:
         self.learning_rate_c = LEARNING_RATE_CRITIC
         self.memory = deque(maxlen=MAX_MEMORY_LEN)
         self.channel = CHANNEL
-        self.train_start = 1000
+        self.train_start = 200
         self.batch_size = 64
         self.gamma = 0.9
         self.sigma_fixed = 3
