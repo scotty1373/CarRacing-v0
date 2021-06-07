@@ -238,13 +238,14 @@ class ddpg_Net:
         grad_critic_loss = tape.gradient(loss, agent.critic_model.trainable_weights)
         optimizer_critic.apply_gradients(zip(grad_critic_loss, agent.critic_model.trainable_weights))
 
-        with tf.GradientTape() as tape:
+        with tf.GradientTape(persistent=True) as tape_actor:
             a = self.actor_model([s_, speedX_])
             a_ang, a_acc = tf.split(a, 2, axis=0)
             q = self.critic_model([s_, speedX_, tf.squeeze(a_ang, axis=[0]), tf.squeeze(a_acc, axis=[0])])
             actor_loss = tf.reduce_mean(q)
+        policy_gradient = tape_actor.gradient(q, a)
         # q based on a, so gradient with the weight of actor is based on the chain rule
-        grad_a = tape.gradient(actor_loss, agent.actor_model.trainable_weights)
+        grad_a = tape_actor.gradient(a, agent.actor_model.trainable_weights, output_gradients=policy_gradient)
         optimizer_actor.apply_gradients(zip(grad_a, agent.actor_model.trainable_weights))
 
         agent.weight_soft_update()    # soft update should be not too lang and not too short
@@ -269,7 +270,7 @@ if __name__ == '__main__':
     count = 0
 
     while True:
-        if np.mod(count, 100) == 0:
+        if np.mod(count, 25) == 0:
             # Sometimes you need to relaunch TORCS because of the memory leak error
             ob = env.reset(relaunch=True)
         else:
