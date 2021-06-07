@@ -59,6 +59,7 @@ import getopt
 import os
 import time
 PI= 3.14159265359
+sudo_pw = 'Havana123!@#'
 
 data_size = 2**17
 
@@ -172,15 +173,15 @@ class Client():
                 print("Count Down : " + str(n_fail))
                 if n_fail < 0:
                     print("relaunch torcs")
-                    os.system(f'sudo pkill torcs')
+                    os.system(f'echo {sudo_pw} | sudo -S pkill torcs')
                     time.sleep(1.0)
                     if self.vision is False:
-                        os.system(f'sudo torcs -nofuel -nodamage -nolaptime &')
+                        os.system(f'echo {sudo_pw} | sudo -S torcs -nofuel -nodamage -nolaptime &')
                     else:
-                        os.system(f'sudo torcs -nofuel -nodamage -nolaptime -vision &')
+                        os.system(f'echo {sudo_pw} | sudo -S torcs -nofuel -nodamage -nolaptime -vision &')
 
                     time.sleep(1.0)
-                    os.system('sudo sh autostart.sh')
+                    os.system(f'echo {sudo_pw} | sudo -S sh autostart.sh')
                     n_fail = 5
                 n_fail -= 1
 

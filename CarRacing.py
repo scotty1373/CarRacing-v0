@@ -71,15 +71,19 @@ class ddpg_Net:
     def actor_net_builder(self):
         input_ = keras.Input(shape=self.input_shape, dtype='float', name='actor_input')
         input_v = keras.Input(shape=(4,), dtype='float', name='speed vector')
-        common = keras.layers.Conv2D(8, (5, 5),
+        common = keras.layers.Conv2D(16, (5, 5),
                                      strides=(1, 1),
                                      activation='relu')(input_)  # 8, 60, 60
-        common = keras.layers.Conv2D(64, (3, 3),
+        common = keras.layers.Conv2D(32, (3, 3),
                                      strides=(3, 3),
                                      activation='relu')(common)  # 64, 20, 20
-        common = keras.layers.Conv2D(128, (3, 3),
+        common = keras.layers.Conv2D(64, (3, 3),
                                      strides=(3, 3),
                                      activation='relu')(common)     # 128, 6, 6
+        common = keras.layers.Conv2D(128, (3, 3),
+                                     padding='same',
+                                     strides=(1, 1),
+                                     activation='relu')(common)
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
         common = keras.layers.Dense(units=16, activation='relu')(common)
@@ -103,20 +107,24 @@ class ddpg_Net:
         common = keras.layers.Conv2D(8, (5, 5),
                                      strides=(1, 1),
                                      activation='relu')(input_state)  # 8, 60, 60
-        common = keras.layers.Conv2D(64, (3, 3),
+        common = keras.layers.Conv2D(32, (3, 3),
                                      strides=(3, 3),
                                      activation='relu')(common)  # 64, 20, 20
-        common = keras.layers.Conv2D(128, (3, 3),
+        common = keras.layers.Conv2D(64, (3, 3),
                                      strides=(3, 3),
                                      activation='relu')(common)     # 128, 6, 6
+        common = keras.layers.Conv2D(128, (3, 3),
+                                     padding='same',
+                                     strides=(1, 1),
+                                     activation='relu')(common)
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
         common = keras.layers.Dense(units=16, activation='relu')(common)
 
         input_v_proc = keras.layers.Dense(units=16, activation='relu')(input_v)
         input_v_proc = keras.layers.Flatten()(input_v_proc)
-        actor_angle_in = keras.layers.Dense(units=16, activation='relu')(input_actor_angle)
-        actor_accele_in = keras.layers.Dense(units=16, activation='relu')(input_actor_accele)
+        actor_angle_in = keras.layers.Dense(units=8, activation='relu')(input_actor_angle)
+        actor_accele_in = keras.layers.Dense(units=8, activation='relu')(input_actor_accele)
 
         concatenated = keras.layers.Concatenate()([common, input_v_proc, actor_angle_in, actor_accele_in])
 
@@ -277,7 +285,7 @@ if __name__ == '__main__':
         speedX = np.stack((speedX, speedX, speedX, speedX), axis=1)
 
         for index in range(MAX_STEP_EPISODE):
-            ang_net, acc_net = agent.action_choose([obs, speedX.reshape(4)])
+            ang_net, acc_net = agent.action_choose([obs, speedX])
             if count < 3000:
                 ang_net = tf.add(ang_net, agent.OU_angle.noise())
                 acc_net = tf.add(acc_net, agent.OU_accele.noise())
@@ -292,9 +300,10 @@ if __name__ == '__main__':
             ob_t1, reward, done, _ = env.step(action)
             focus_t1, speedX_t1, _, _, _, _, track_t1, _, obs_t1, _ = agent.data_pcs(ob_t1)
             obs_t1 = np.append(obs[:, :, :, 1:], obs_t1, axis=3)
+            speedX_t1 = np.reshape(speedX_t1, (1, 1))
             speedX_t1 = np.append(speedX[:, 1:], speedX_t1, axis=1)
 
-            c_v = agent.critic_model([obs_t1, speedX_t1.reshape(4), ang_net, acc_net])
+            c_v = agent.critic_model([obs_t1, speedX_t1, ang_net, acc_net])
             c_v_target = agent.critic_target_model([obs_t1, speedX_t1, ang_net, acc_net])
 
             if done:
@@ -313,7 +322,7 @@ if __name__ == '__main__':
             print(f'timestep: {timestep},'
                   f'epoch: {count}, reward: {reward}, angle: {ang_net},'
                   f'acc: {acc_net}, reward_mean: {np.array(ep_history).sum()} '
-                  f'c_r: {c_v}, c_t: {c_v_target}, line_time: {live_time}'
+                  f'c_r: {c_v}, c_t: {c_v_target}, line_time: {live_time} '
                   f'sigma: {agent.sigma_fixed}')
 
             timestep += 1
