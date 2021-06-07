@@ -54,7 +54,7 @@ class ddpg_Net:
         self.critic_model = self.critic_net_build()
         self.actor_target_model = self.actor_net_builder()
         self.critic_target_model = self.critic_net_build()
-        self.OU_angle = OUNoise(action_dimension=1, mu=0, theta=0.6, sigma=0.3)
+        self.OU_angle = OUNoise(action_dimension=1, mu=0, theta=1.0, sigma=0.3)
         self.OU_accele = OUNoise(action_dimension=1, mu=0.3, theta=1.0, sigma=0.1)
 
         # self.actor_target_model.trainable = False
@@ -71,14 +71,14 @@ class ddpg_Net:
     def actor_net_builder(self):
         input_ = keras.Input(shape=self.input_shape, dtype='float', name='actor_input')
         input_v = keras.Input(shape=(4,), dtype='float', name='speed vector')
-        common = keras.layers.Conv2D(16, (5, 5),
-                                     strides=(1, 1),
+        common = keras.layers.Conv2D(16, (8, 8),
+                                     strides=(4, 4),
                                      activation='relu')(input_)  # 8, 60, 60
-        common = keras.layers.Conv2D(32, (3, 3),
+        common = keras.layers.Conv2D(32, (4, 4),
                                      strides=(3, 3),
                                      activation='relu')(common)  # 64, 20, 20
         common = keras.layers.Conv2D(64, (3, 3),
-                                     strides=(3, 3),
+                                     strides=(1, 1),
                                      activation='relu')(common)     # 128, 6, 6
         common = keras.layers.Conv2D(128, (3, 3),
                                      padding='same',
@@ -92,7 +92,7 @@ class ddpg_Net:
         concatenated = keras.layers.Concatenate()([common, input_v_proc])
 
         actor_angle = keras.layers.Dense(units=self.out_shape, activation='tanh')(concatenated)
-        actor_accela = keras.layers.Dense(units=self.out_shape, activation='sigmoid')(concatenated)
+        actor_accela = keras.layers.Dense(units=self.out_shape, activation='tanh')(concatenated)
         model = keras.Model(inputs=[input_, input_v], outputs=[actor_angle, actor_accela], name='actor')
         return model
 
@@ -104,18 +104,17 @@ class ddpg_Net:
                                         dtype='float', name='critic_action_angle_input')
         input_actor_accele = keras.Input(shape=self.critic_input_action_shape,
                                          dtype='float', name='critic_action_accele_input')
-        common = keras.layers.Conv2D(8, (5, 5),
-                                     strides=(1, 1),
-                                     activation='relu')(input_state)  # 8, 60, 60
-        common = keras.layers.Conv2D(32, (3, 3),
-                                     strides=(3, 3),
-                                     activation='relu')(common)  # 64, 20, 20
+        common = keras.layers.Conv2D(16, (8, 8),
+                                     strides=(4, 4),
+                                     activation='relu')(input_state)  # 8, 14, 14
+        common = keras.layers.Conv2D(32, (4, 4),
+                                     strides=(3, 3), padding='same',
+                                     activation='relu')(common)  # 64, 5, 5
         common = keras.layers.Conv2D(64, (3, 3),
-                                     strides=(3, 3),
-                                     activation='relu')(common)     # 128, 6, 6
+                                     strides=(1, 1), padding='same'
+                                     activation='relu')(common)     # 128, 5, 5
         common = keras.layers.Conv2D(128, (3, 3),
-                                     padding='same',
-                                     strides=(1, 1),
+                                     strides=(1, 1), padding='same',
                                      activation='relu')(common)
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
