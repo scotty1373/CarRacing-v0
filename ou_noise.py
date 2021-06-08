@@ -28,9 +28,9 @@ class OUNoise:
         return self.state
 
 if __name__ == '__main__':
-    ou = OUNoise(1, 0, 0.8, 0.3)
+    ou = OUNoise(1, 0, 0.8, 0.15)
     states = []
-    for i in range(1000):
+    for i in range(300):
         states.append(ou.noise())
     import matplotlib.pyplot as plt
 

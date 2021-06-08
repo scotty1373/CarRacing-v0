@@ -43,7 +43,7 @@ class ddpg_Net:
         self.learning_rate_c = LEARNING_RATE_CRITIC
         self.memory = deque(maxlen=MAX_MEMORY_LEN)
         self.channel = CHANNEL
-        self.train_start = 200
+        self.train_start = 1000
         self.batch_size = 32
         self.gamma = 0.9
         self.sigma_fixed = 3
@@ -54,8 +54,8 @@ class ddpg_Net:
         self.critic_model = self.critic_net_build()
         self.actor_target_model = self.actor_net_builder()
         self.critic_target_model = self.critic_net_build()
-        self.OU_angle = OUNoise(action_dimension=1, mu=0, theta=0.6, sigma=0.15)
-        self.OU_accele = OUNoise(action_dimension=1, mu=0.3, theta=1.0, sigma=0.1)
+        self.OU_angle = OUNoise(action_dimension=1, mu=0, theta=0.6, sigma=0.3)
+        self.OU_accele = OUNoise(action_dimension=1, mu=0.1, theta=1.0, sigma=0.1)
 
         # self.actor_target_model.trainable = False
         # self.critic_target_model.trainable = False
@@ -248,11 +248,11 @@ class ddpg_Net:
             actor_loss = tf.reduce_mean(q)
         policy_gradient = tape_actor.gradient(q, a)
         # q based on a, so gradient with the weight of actor is based on the chain rule
-        grad_a = tape_actor.gradient(a, agent.actor_model.trainable_weights, output_gradients=policy_gradient)
+        grad_a = tape_actor.gradient(actor_loss, agent.actor_model.trainable_weights)
         optimizer_actor.apply_gradients(zip(grad_a, agent.actor_model.trainable_weights))
 
         agent.weight_soft_update()    # soft update should be not too lang and not too short
-        agent.sigma_fixed *= .9995     # decay normal function sigma val
+        agent.sigma_fixed *= .995     # decay normal function sigma val
 
 
 if __name__ == '__main__':
@@ -295,6 +295,8 @@ if __name__ == '__main__':
                 acc_noise = agent.OU_accele.noise()
                 ang_net = tf.add(ang_net, ang_noise)
                 acc_net = tf.add(acc_net, acc_noise)
+                agent.OU_angle.sigma *= 0.995
+                agent.OU_accele.sigma *= 0.995
                 ang_net = np.clip(ang_net, -action_range[0], action_range[0])
                 acc_net = np.clip(acc_net, 0, action_range[1])
                 # ang_net = np.clip(np.random.normal(loc=ang_net, scale=agent.sigma_fixed),
