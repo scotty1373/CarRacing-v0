@@ -44,7 +44,7 @@ class ddpg_Net:
         self.memory = deque(maxlen=MAX_MEMORY_LEN)
         self.channel = CHANNEL
         self.train_start = 200
-        self.batch_size = 64
+        self.batch_size = 32
         self.gamma = 0.9
         self.sigma_fixed = 3
         self.critic_input_action_shape = 1
@@ -54,7 +54,7 @@ class ddpg_Net:
         self.critic_model = self.critic_net_build()
         self.actor_target_model = self.actor_net_builder()
         self.critic_target_model = self.critic_net_build()
-        self.OU_angle = OUNoise(action_dimension=1, mu=0, theta=1.0, sigma=0.3)
+        self.OU_angle = OUNoise(action_dimension=1, mu=0, theta=0.6, sigma=0.15)
         self.OU_accele = OUNoise(action_dimension=1, mu=0.3, theta=1.0, sigma=0.1)
 
         # self.actor_target_model.trainable = False
@@ -75,24 +75,26 @@ class ddpg_Net:
                                      strides=(4, 4),
                                      activation='relu')(input_)  # 8, 60, 60
         common = keras.layers.Conv2D(32, (4, 4),
-                                     strides=(3, 3),
+                                     strides=(3, 3), padding='same',
                                      activation='relu')(common)  # 64, 20, 20
         common = keras.layers.Conv2D(64, (3, 3),
-                                     strides=(1, 1),
+                                     strides=(1, 1), padding='same',
                                      activation='relu')(common)     # 128, 6, 6
         common = keras.layers.Conv2D(128, (3, 3),
                                      padding='same',
                                      strides=(1, 1),
                                      activation='relu')(common)
+        common = keras.layers.BatchNormalization()(common)
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
         common = keras.layers.Dense(units=16, activation='relu')(common)
         input_v_proc = keras.layers.Dense(units=16, activation='relu')(input_v)
         input_v_proc = keras.layers.Flatten()(input_v_proc)
         concatenated = keras.layers.Concatenate()([common, input_v_proc])
+        concatenated = keras.layers.BatchNormalization()(concatenated)
 
         actor_angle = keras.layers.Dense(units=self.out_shape, activation='tanh')(concatenated)
-        actor_accela = keras.layers.Dense(units=self.out_shape, activation='tanh')(concatenated)
+        actor_accela = keras.layers.Dense(units=self.out_shape, activation='sigmoid')(concatenated)
         model = keras.Model(inputs=[input_, input_v], outputs=[actor_angle, actor_accela], name='actor')
         return model
 
@@ -111,11 +113,12 @@ class ddpg_Net:
                                      strides=(3, 3), padding='same',
                                      activation='relu')(common)  # 64, 5, 5
         common = keras.layers.Conv2D(64, (3, 3),
-                                     strides=(1, 1), padding='same'
+                                     strides=(1, 1), padding='same',
                                      activation='relu')(common)     # 128, 5, 5
         common = keras.layers.Conv2D(128, (3, 3),
                                      strides=(1, 1), padding='same',
                                      activation='relu')(common)
+        common = keras.layers.BatchNormalization()(common)
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
         common = keras.layers.Dense(units=16, activation='relu')(common)
@@ -126,6 +129,7 @@ class ddpg_Net:
         actor_accele_in = keras.layers.Dense(units=8, activation='relu')(input_actor_accele)
 
         concatenated = keras.layers.Concatenate()([common, input_v_proc, actor_angle_in, actor_accele_in])
+        concatenated = keras.layers.BatchNormalization()(concatenated)
 
         critic_output = keras.layers.Dense(units=self.out_shape)(concatenated)
         model = keras.Model(inputs=[input_state, input_v, input_actor_angle, input_actor_accele],
@@ -291,12 +295,14 @@ if __name__ == '__main__':
                 acc_noise = agent.OU_accele.noise()
                 ang_net = tf.add(ang_net, ang_noise)
                 acc_net = tf.add(acc_net, acc_noise)
+                ang_net = np.clip(ang_net, -action_range[0], action_range[0])
+                acc_net = np.clip(acc_net, 0, action_range[1])
+                # ang_net = np.clip(np.random.normal(loc=ang_net, scale=agent.sigma_fixed),
+                #                   -action_range[0], action_range[0])
+                # acc_net = np.clip(np.random.normal(loc=acc_net, scale=agent.sigma_fixed),
+                #                   0, action_range[1])
             else:
                 pass
-            # ang = np.clip(np.random.normal(loc=ang_net, scale=agent.sigma_fixed),
-            #               -action_range[0], action_range[0])
-            # acc = np.clip(np.random.normal(loc=acc_net, scale=agent.sigma_fixed),
-            #               -action_range[1], action_range[1])
 
             action = np.array((ang_net, acc_net), dtype='float')
             ob_t1, reward, done, _ = env.step(action)
@@ -322,8 +328,8 @@ if __name__ == '__main__':
                 agent.train_replay()
 
             print(f'timestep: {timestep},'
-                  f'epoch: {count}, reward: {reward}, ang: {ang_net}, ang_noise: {ang_noise}'
-                  f'acc: {acc_net}, acc_noise: {acc_noise}, reward_mean: {np.array(ep_history).sum()} '
+                  f'epoch: {count}, reward: {reward}, ang: {ang_net} '
+                  f'acc: {acc_net}, reward_mean: {np.array(ep_history).sum()} '
                   f'c_r: {c_v}, c_t: {c_v_target}, line_time: {live_time} '
                   f'sigma: {agent.sigma_fixed}')
 

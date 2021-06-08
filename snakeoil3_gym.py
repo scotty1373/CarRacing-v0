@@ -181,7 +181,7 @@ class Client():
                         os.system(f'echo {sudo_pw} | sudo -S torcs -nofuel -nodamage -nolaptime -vision &')
 
                     time.sleep(1.0)
-                    os.system(f'echo {sudo_pw} | sudo -S sh autostart.sh')
+                    os.system(f'sh autostart.sh')
                     n_fail = 5
                 n_fail -= 1
 
