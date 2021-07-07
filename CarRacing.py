@@ -43,8 +43,8 @@ class ddpg_Net:
         self.learning_rate_c = LEARNING_RATE_CRITIC
         self.memory = deque(maxlen=MAX_MEMORY_LEN)
         self.channel = CHANNEL
-        self.train_start = 1000
-        self.batch_size = 32
+        self.train_start = 300
+        self.batch_size = 128
         self.gamma = 0.9
         self.sigma_fixed = 3
         self.critic_input_action_shape = 1
@@ -84,7 +84,7 @@ class ddpg_Net:
                                      padding='same',
                                      strides=(1, 1),
                                      activation='relu')(common)
-        common = keras.layers.BatchNormalization()(common)
+        # common = keras.layers.BatchNormalization()(common)
         common = keras.layers.Flatten()(common)
         common = keras.layers.Dense(units=128, activation='relu')(common)
         common = keras.layers.Dense(units=16, activation='relu')(common)
@@ -297,8 +297,8 @@ if __name__ == '__main__':
                 acc_net = tf.add(acc_net, acc_noise)
                 agent.OU_angle.sigma *= 0.995
                 agent.OU_accele.sigma *= 0.995
-                ang_net = np.clip(ang_net, -action_range[0], action_range[0])
-                acc_net = np.clip(acc_net, 0, action_range[1])
+                ang_net = np.clip(ang_net, -action_range[0] + 0.5, action_range[0] - 0.5)
+                acc_net = np.clip(acc_net, 0, action_range[1] - 0.5)
                 # ang_net = np.clip(np.random.normal(loc=ang_net, scale=agent.sigma_fixed),
                 #                   -action_range[0], action_range[0])
                 # acc_net = np.clip(np.random.normal(loc=acc_net, scale=agent.sigma_fixed),
@@ -306,7 +306,7 @@ if __name__ == '__main__':
             else:
                 pass
 
-            action = np.array((ang_net, acc_net), dtype='float')
+            action = np.array((ang_net, acc_net - 0.3), dtype='float')
             ob_t1, reward, done, _ = env.step(action)
             focus_t1, speedX_t1, _, _, _, _, track_t1, _, obs_t1, _ = agent.data_pcs(ob_t1)
             obs_t1 = np.append(obs[:, :, :, 1:], obs_t1, axis=3)
@@ -332,13 +332,14 @@ if __name__ == '__main__':
             print(f'timestep: {timestep},'
                   f'epoch: {count}, reward: {reward}, ang: {ang_net} '
                   f'acc: {acc_net}, reward_mean: {np.array(ep_history).sum()} '
-                  f'c_r: {c_v}, c_t: {c_v_target}, line_time: {live_time} '
+                  f'c_r: {c_v}, c_t: {c_v_target}, live_time: {live_time} '
                   f'sigma: {agent.sigma_fixed}')
 
             timestep += 1
             obs = obs_t1
             speedX = speedX_t1
             live_time += 1
+            time.sleep(0.1)
 
         if count == epochs:
             break
