@@ -15,7 +15,7 @@ import platform
 import time
 import os
 
-LEARNING_RATE_ACTOR = 0.001
+LEARNING_RATE_ACTOR = 0.0001
 LEARNING_RATE_CRITIC = 0.001
 MAX_MEMORY_LEN = 32000
 MAX_STEP_EPISODE = 1000
@@ -35,7 +35,7 @@ if not os.path.exists(CURRENT_PATH):
     os.makedirs(CURRENT_PATH)
 
 
-class ddpg_Net:
+class DDPG_NET:
     def __init__(self, shape_in, num_output, accele_range, angle_range):
         self.input_shape = shape_in
         self.out_shape = num_output
@@ -70,7 +70,7 @@ class ddpg_Net:
 
     def actor_net_builder(self):
         input_ = keras.Input(shape=self.input_shape, dtype='float', name='actor_input')
-        input_v = keras.Input(shape=(4,), dtype='float', name='speed vector')
+        input_v = keras.Input(shape=(4,), dtype='float', name='speed_vector')
         common = keras.layers.Conv2D(16, (8, 8),
                                      strides=(4, 4),
                                      activation='relu')(input_)  # 8, 60, 60
@@ -101,7 +101,7 @@ class ddpg_Net:
     def critic_net_build(self):
         input_state = keras.Input(shape=self.input_shape,
                                   dtype='float', name='critic_state_input')
-        input_v = keras.Input(shape=(4,), dtype='float', name='speed vector')
+        input_v = keras.Input(shape=(4,), dtype='float', name='speed_vector')
         input_actor_angle = keras.Input(shape=self.critic_input_action_shape,
                                         dtype='float', name='critic_action_angle_input')
         input_actor_accele = keras.Input(shape=self.critic_input_action_shape,
@@ -265,7 +265,7 @@ if __name__ == '__main__':
     state_shape = np.array(env.observation_space.shape)
     action_range = env.action_space.high            # [1., 1., 1.]  ~  [-1.,  0.,  0.]
 
-    agent = ddpg_Net((64, 64, 4), np.ndim(action_shape), action_range[0], action_range[1])
+    agent = DDPG_NET((64, 64, 4), np.ndim(action_shape), action_range[0], action_range[1])
     agent.actor_model.summary()
     agent.critic_model.summary()
     epochs = 400
