@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import random
+import sys
 
 import tensorflow as tf
 import tensorflow.keras as keras
@@ -350,3 +351,4 @@ if __name__ == '__main__':
         count += 1
 
     env.end()
+    sys.exit()
