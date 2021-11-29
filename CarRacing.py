@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 import random
 import sys
-
+sys.path.append("./common/")
 import tensorflow as tf
 import tensorflow.keras as keras
 from collections import deque
 from skimage.color import rgb2gray
 import matplotlib.pyplot as plt
-from gym_torcs import TorcsEnv
+from common.gym_torcs import TorcsEnv
 from ou_noise import OUNoise
 import pandas as pd
 import numpy as np

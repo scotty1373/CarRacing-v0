@@ -2,7 +2,7 @@ from gym_torcs import TorcsEnv
 from sample_agent import Agent
 import numpy as np
 
-vision = True
+vision = False
 episode_count = 10
 max_steps = 50
 reward = 0

@@ -59,7 +59,7 @@ import getopt
 import os
 import time
 PI= 3.14159265359
-sudo_pw = 'Havana123!@#'
+sudo_pw = '145573'
 
 data_size = 2**17
 
